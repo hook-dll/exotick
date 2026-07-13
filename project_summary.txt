@@ -1,7 +1,7 @@
 ================================================================================
 exotick — Developer / Maintainer Reference
 ================================================================================
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 Everything a maintainer needs to reconstruct or modify the system. Dry and
 authoritative. If it isn't here, it isn't a stable feature.
@@ -10,7 +10,7 @@ authoritative. If it isn't here, it isn't a stable feature.
 ================================================================================
 1. STACK
 ================================================================================
-Frontend  React 18, TypeScript, Vite 5, Tailwind 3, React Router v6,
+Frontend  React 18, TypeScript, Vite 8, Tailwind 3, React Router v6,
           react-markdown + remark-gfm
 Backend   Node.js 24, Express 4, TypeScript, tsx (dev watch),
           node:sqlite (built-in — no native deps), multer, fflate (pure-JS
@@ -31,14 +31,23 @@ exotick/
                                   non-root exotick user, HEALTHCHECK on
                                   /api/health, EXPOSE 3001
   docker-compose.yml              single exotick service, exotick-data named
-                                  volume at /data, admin bootstrap env vars.
+                                  volume at /data. Admin password comes from
+                                  .env (EXOTICK_ADMIN_PASSWORD is required —
+                                  compose refuses to start without it, via
+                                  ${VAR:?}); username defaults to 'admin'.
                                   Container binds to 127.0.0.1:3001;
                                   TLS termination is expected to happen in
                                   whatever reverse proxy the operator sets
                                   up on the host — the app never speaks TLS
                                   itself. See readme.md > HTTPS.
+  .env.example                    copy to .env; carries EXOTICK_ADMIN_*
+                                  for docker compose (gitignored .env)
   .dockerignore                   excludes node_modules, dist, data, docs, git
-  start-users.bat                 Windows launcher — sets admin bootstrap vars
+  .gitignore                      node_modules, dist, data, .env, editor/OS,
+                                  server/fonts/*.ttf, docs/screens/*.mjs,
+                                  .claude/settings.local.json
+  .gitattributes                  normalizes text to LF (Windows edit,
+                                  Linux/Docker run); marks binary assets
   readme.md                       user-facing docs
   project_summary.txt             this file
   deploy/
@@ -57,18 +66,25 @@ exotick/
     tsconfig.json                 CommonJS, ES2020, strict
     src/
       index.ts                    Express app entry; trust proxy=1;
-                                  cookie-parser; json body 5mb; bootstrap
-                                  admin; session prune scheduler;
+                                  global security headers on every response
+                                  (X-Content-Type-Options: nosniff,
+                                  X-Frame-Options: DENY, Referrer-Policy:
+                                  same-origin, CSP: frame-ancestors 'none' +
+                                  base-uri 'self' + object-src 'none' — no
+                                  script/style CSP so the inline theme script
+                                  survives); cookie-parser; json body 5mb;
+                                  bootstrap admin; session prune scheduler;
                                   /api/health; /uploads (requireAuth-gated,
-                                  X-Content-Type-Options: nosniff);
-                                  /branding (public static, nosniff);
+                                  nosniff); /branding (public static, nosniff);
                                   /api/branding + /api/auth (public
                                   routers); global requireAuth on /api;
                                   routers mounted; unknown-/api 404 JSON;
-                                  prod SPA fallback; graceful shutdown
-                                  (SIGTERM/SIGINT). No CORS middleware —
-                                  the app is single-origin (Vite proxy in
-                                  dev, Caddy in prod).
+                                  prod SPA fallback; central error handler
+                                  (LAST) — multer / body-parser / thrown
+                                  errors → JSON, never leaks a 5xx stack;
+                                  graceful shutdown (SIGTERM/SIGINT). No CORS
+                                  middleware — the app is single-origin
+                                  (Vite proxy in dev, Caddy in prod).
       db.ts                       DatabaseSync init, DDL, idempotent
                                   migrations (test_cases.notes,
                                   test_run_items.snapshot_notes,
@@ -111,11 +127,23 @@ exotick/
                                     - else → throw BootstrapError with a
                                       checklist and both fallback paths.
                                   Idempotent; safe to call every boot.
-        bootstrap-cli.ts          Standalone entry (../bootstrap-cli.ts)
-                                  that runs bootstrapAdmin and exits.
-                                  Wired to the root `predev` npm hook so
-                                  `npm run dev` prompts once before
+                                  Also exports resetAdmin() + ResetError
+                                  (host-side admin password recovery — see
+                                  reset-admin-cli.ts).
+        bootstrap-cli.ts          Standalone entry that runs bootstrapAdmin
+                                  and exits. Wired to the root `predev` npm
+                                  hook so `npm run dev` prompts once before
                                   concurrently spins up Vite + tsx watch.
+        reset-admin-cli.ts        Standalone entry for admin recovery —
+                                  `npm run reset-admin` (local) or, in
+                                  Docker, `docker compose exec exotick node
+                                  server/dist/reset-admin-cli.js`. Runs
+                                  resetAdmin(): picks the sole admin (or
+                                  EXOTICK_RESET_USERNAME), sets a new
+                                  password (prompt or EXOTICK_RESET_PASSWORD),
+                                  clears disabled_at, revokes that admin's
+                                  sessions, logs a password_reset event.
+                                  Host-only; there is NO web-facing reset.
         rateLimit.ts              progressive lockout used by /login (keyed
                                   per-IP) and /change-password (keyed
                                   per-user):
@@ -216,8 +244,10 @@ exotick/
                                   GET /export?library_id=N (.zip with
                                   backup.json — carrying library.name —
                                   + uploads/ referenced by notes).
-                                  POST /import (multipart on-disk temp
-                                  file up to 100 MB) supports three modes:
+                                  POST /import (multipart temp file up to
+                                  100 MB, written to the OS temp dir — NOT
+                                  UPLOADS_DIR, so it's never served)
+                                  supports three modes:
                                     new     → create a fresh library
                                               named after backup.library
                                               .name (with "(n)" bump if
@@ -227,9 +257,13 @@ exotick/
                                     replace → wipe target_library_id's
                                               sections + cases, then
                                               restore
-                                  Guards against zip bombs by capping
-                                  entry count / per-entry size / total
-                                  inflated size. Legacy 'testcms-backup'
+                                  Guards against zip bombs BEFORE inflation:
+                                  an fflate unzip filter rejects on the
+                                  header-declared entry count / per-entry
+                                  size / total uncompressed size, so an
+                                  oversized entry is never decompressed
+                                  (a post-inflation check backstops it).
+                                  Legacy 'testcms-backup'
                                   and v1/v2 'exotick-backup' formats read
                                   as if `mode=new` regardless of the
                                   mode flag (they don't carry a library
@@ -244,16 +278,19 @@ exotick/
                                   is imported by testRuns.ts. Backed by
                                   the existing `settings` key/value table
                                   under key `take_over_cooldown_minutes`.
-        log.ts                    admin+ throughout. This is NOT a full
-                                  audit of every user action — it only
-                                  captures events that carry a reason
-                                  (currently take over). GET / returns
-                                  the latest 200 rows (newest first) plus
-                                  a total count; older history via
-                                  GET /export.csv which STREAMS the file
-                                  row-by-row (no in-memory buffer).
-                                  Written to on every successful take-
-                                  over from routes/testRuns.ts.
+        log.ts                    admin+ throughout. Records key named
+                                  actions (login / edit / compose / start /
+                                  finish / take_over / password_change /
+                                  password_reset) — NOT a keystroke-level
+                                  audit (no reads, no per-case marks, no
+                                  role snapshot). GET / returns the latest
+                                  200 rows (newest first) plus a total
+                                  count; older history via GET /export.csv
+                                  which STREAMS row-by-row (no in-memory
+                                  buffer) and is Excel-safe: UTF-8 BOM +
+                                  `sep=,` hint + CRLF, and a formula-
+                                  injection guard ('/=/+/-/@' prefixed with
+                                  a quote) on every field.
         branding.ts               data/branding/ auto-created;
                                   ALLOWED_EXT (png/jpg/jpeg/webp — no SVG,
                                   no XSS surface); multer 2 MB; NAME_KEY
@@ -358,8 +395,9 @@ exotick/
         TakeOverDialog.tsx        Modal used by Dashboard + ActiveTestRun;
                                   reason textarea + live char counter;
                                   submit disabled until trimmed length
-                                  ≥ 10; surfaces 409 cooldown errors
-                                  inline
+                                  ≥ 10; paste + drag-drop blocked (reason
+                                  must be typed); surfaces 409 cooldown
+                                  errors inline
       pages/
         Login.tsx                 RateLimitError shows a live countdown
                                   ("Wait 42s"); uses Brand variant="light"
@@ -367,13 +405,17 @@ exotick/
                                   render library_name alongside runner_
                                   name; per-run ownership check
                                   (isMine); Resume when own, View + Take
-                                  over otherwise; cooldownMinutesLeft
-                                  (via parseServerTs) disables Take over
-                                  during cooldown with tooltip;
-                                  role-gated shortcut tiles
+                                  over otherwise; Delete on drafts
+                                  (admin+editor) and on active runs
+                                  (admin only — matches the server gate);
+                                  cooldownMinutesLeft (via parseServerTs)
+                                  disables Take over during cooldown with
+                                  tooltip; role-gated shortcut tiles
         EditMode.tsx              Library toolbar at the top (Picker +
                                   Rename + Delete + New library, all
-                                  inline). Sections + cases CRUD scoped
+                                  inline). Delete opens a modal that
+                                  requires typing REALLY (paste + drag-drop
+                                  blocked). Sections + cases CRUD scoped
                                   to active library; every API call
                                   passes library_id. Colors, notes,
                                   images, bulk ops. Backup buttons
@@ -418,8 +460,11 @@ exotick/
                                   in every picker; admin has no
                                   self-manage buttons in the list.
 
-  docs/                           Screenshots + capture scripts (not
-                                  included in Docker image)
+  docs/screens/                   showcase GIFs (gif-*.gif) + per-role
+                                  screenshots (shot-*.png), embedded in
+                                  readme. Capture scripts (*.mjs) are kept
+                                  locally but gitignored. Not in the Docker
+                                  image.
 
 
 ================================================================================
@@ -605,6 +650,10 @@ an admin username + password when stdin is a TTY. In headless / Docker
 contexts the credentials come from EXOTICK_ADMIN_USERNAME +
 EXOTICK_ADMIN_PASSWORD instead. Without either path, the server refuses
 to start. Bootstrap is idempotent — subsequent boots are a no-op.
+
+Password recovery: a locked-out admin resets from the host via the
+reset-admin CLI (see §10/§12); non-admins ask an admin to reset them at
+Settings > Users. There is no email / web-facing self-reset by design.
 
 Roles — hierarchy is admin > editor > runner > watcher for the read /
 edit / management chain, BUT admin is deliberately excluded from the
@@ -800,6 +849,13 @@ EXOTICK_ADMIN_USERNAME     2-64 chars [A-Za-z0-9._@+-] — plain handles and
                            no admin exists in the DB and stdin is NOT a TTY
                            (Docker, CI). Ignored after any admin exists.
 EXOTICK_ADMIN_PASSWORD     ≥ 8 chars. Same rules as ADMIN_USERNAME.
+EXOTICK_RESET_PASSWORD     New admin password for the reset-admin CLI
+                           (≥ 8 chars). Only read by `npm run reset-admin`
+                           / reset-admin-cli.js; unattended alternative to
+                           the interactive prompt. Ignored by the server.
+EXOTICK_RESET_USERNAME     reset-admin only: which admin to reset. Needed
+                           solely in the (non-UI) edge case of more than
+                           one admin; ignored for the single-admin norm.
 EXOTICK_DATA_DIR           Path to the data directory. Default:
                            ../data (dev) / /data (Docker).
 PORT                       Listen port. Default: 3001.
@@ -824,9 +880,6 @@ Dev (both servers concurrently):
   npm run dev
   → tsx watch server/src/index.ts (backend 3001)
   → vite (client 5173 with proxy: /api /uploads /branding → 3001)
-
-Windows launcher (double-click):
-  start-users.bat       sets admin bootstrap vars → npm run dev
 
 Production build:
   npm run build
@@ -894,7 +947,9 @@ Graceful shutdown:
   admin row and then re-run the bootstrap to create a new admin with a
   chosen password. Mitigation deliberately not implemented; app-level
   defense doesn't win against host-shell access, and preventing it would
-  break legitimate recovery.
+  break legitimate recovery. That same host access is the intended
+  recovery channel for a locked-out admin — the reset-admin CLI (§10/§12)
+  is the clean version of it (no DB surgery, revokes the admin's sessions).
 
 - Backup zip (routes/backup.ts) covers only the test-case library and
   uploaded images referenced by notes. It does NOT include:
@@ -959,6 +1014,16 @@ Graceful shutdown:
 ================================================================================
 12. QUICK RECOVERY OPS
 ================================================================================
+
+Reset the admin password (locked-out admin — preferred):
+  npm run reset-admin                         # local; prompts for new pw
+  docker compose exec exotick node server/dist/reset-admin-cli.js   # Docker
+  (or set EXOTICK_RESET_PASSWORD for an unattended reset). Revokes the
+  admin's sessions; no DB surgery needed. See readme > Password recovery.
+
+Reset a non-admin user's password:
+  Admin does it in the UI at Settings > Users > Reset password (also
+  revokes that user's sessions).
 
 Reset all users (retain library + runs):
   node -e "const {DatabaseSync}=require('node:sqlite');
