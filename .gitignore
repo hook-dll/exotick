@@ -28,6 +28,11 @@ Thumbs.db
 # Local Playwright output from the verify script
 verify-screenshots/
 
+# Docs capture/tooling scripts — kept locally to regenerate the showcase
+# GIFs/screenshots, but not tracked. Scoped to this folder on purpose (a
+# blanket *.mjs would risk silently ignoring real source later).
+docs/screens/*.mjs
+
 # Bundled Unicode fonts for PDF export (drop your own into server/fonts/
 # if you want cross-platform Cyrillic; keep them out of git if you can't
 # redistribute the .ttf license).
