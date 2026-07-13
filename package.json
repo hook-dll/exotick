@@ -2,6 +2,7 @@
   "name": "exotick",
   "version": "1.0.0",
   "private": true,
+  "license": "CC-BY-NC-SA-4.0",
   "scripts": {
     "predev": "npm run bootstrap --prefix server",
     "dev": "concurrently -n \"server,client\" -c \"blue,green\" \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
