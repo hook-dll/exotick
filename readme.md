@@ -135,7 +135,7 @@ npm run reset-admin
 docker compose exec exotick node server/dist/reset-admin-cli.js
 ```
 
-Both prompt for the new password (hidden input, entered twice). For unattended use, set `EXOTICK_RESET_PASSWORD` before running (and `EXOTICK_RESET_USERNAME` only if you've created more than one admin). Simplest of all: store the admin password in a password manager and you'll never need this.
+Both prompt for the new password (hidden input, entered twice). For unattended use, set `EXOTICK_RESET_PASSWORD` before running. Simplest of all: store the admin password in a password manager and you'll never need this.
 
 ---
 
