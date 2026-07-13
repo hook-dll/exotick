@@ -1,6 +1,8 @@
 import readline from 'node:readline';
 import db from '../db';
 import { hashPassword } from './passwords';
+import { destroyAllSessionsForUser } from './sessions';
+import { writeEvent } from '../eventLog';
 
 // Usernames may be plain handles or email addresses — `@` and `+` are
 // included in the character class, and the upper bound is 64 chars to
@@ -197,4 +199,110 @@ export async function bootstrapAdmin(): Promise<void> {
     `\n[exotick] Admin "${username}" created. Sign in at http://localhost:5173/login.\n` +
     '          Change the password anytime from Settings › Change my password.\n'
   );
+}
+
+// ── Admin password recovery (host-side CLI) ─────────────────────────────────
+// A locked-out admin can't self-serve from the web UI, but whoever runs exotick
+// has shell / `docker compose exec` access — so recovery lives on the host, not
+// behind a stored recovery secret. resetAdmin() sets a new password for an
+// existing admin and revokes that admin's sessions. Wired to `npm run
+// reset-admin` (local) and runnable in Docker via the compiled entry.
+
+export class ResetError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ResetError';
+  }
+}
+
+interface AdminRow { id: number; username: string }
+
+function listAdmins(): AdminRow[] {
+  return db.prepare("SELECT id, username FROM users WHERE role = 'admin' ORDER BY id").all() as unknown as AdminRow[];
+}
+
+// Confirmed hidden password entry, reusing the same raw-mode reader as bootstrap.
+async function askNewPassword(): Promise<string> {
+  for (;;) {
+    const pw = await askSecret('New admin password: ');
+    if (pw.length < MIN_PASSWORD_LEN) {
+      console.log(`  → Password must be at least ${MIN_PASSWORD_LEN} characters.`);
+      continue;
+    }
+    const confirm = await askSecret('Re-enter password: ');
+    if (confirm !== pw) {
+      console.log('  → Passwords do not match. Try again.');
+      continue;
+    }
+    return pw;
+  }
+}
+
+/**
+ * Reset an existing admin's password from the host.
+ *
+ *   - No admin in the DB              → throw ResetError (bootstrap first).
+ *   - Which admin: the sole admin, or EXOTICK_RESET_USERNAME, or (interactive
+ *     with several admins) a prompt.
+ *   - New password: EXOTICK_RESET_PASSWORD if set, else an interactive prompt.
+ *
+ * Also clears disabled_at (a disabled sole admin is a lock-out too) and revokes
+ * all of that admin's sessions, so a leaked/expired session can't linger.
+ */
+export async function resetAdmin(): Promise<void> {
+  const admins = listAdmins();
+  if (admins.length === 0) {
+    throw new ResetError(
+      'No admin account exists to reset.\n' +
+      '  - Start the server to bootstrap one (interactive prompt), OR\n' +
+      '  - Set EXOTICK_ADMIN_USERNAME + EXOTICK_ADMIN_PASSWORD and start the server.'
+    );
+  }
+
+  // Pick the target admin.
+  const envUser = process.env.EXOTICK_RESET_USERNAME?.trim();
+  let target: AdminRow | undefined;
+  if (envUser) {
+    target = admins.find((a) => a.username.toLowerCase() === envUser.toLowerCase());
+    if (!target) {
+      throw new ResetError(`No admin named "${envUser}". Admins: ${admins.map((a) => a.username).join(', ')}`);
+    }
+  } else if (admins.length === 1) {
+    target = admins[0];
+  } else if (process.stdin.isTTY) {
+    process.stdout.write(`Admins: ${admins.map((a) => a.username).join(', ')}\n`);
+    for (;;) {
+      const name = (await askLine('Admin username to reset: ')).trim();
+      target = admins.find((a) => a.username.toLowerCase() === name.toLowerCase());
+      if (target) break;
+      console.log('  → No admin by that name. Try again.');
+    }
+  } else {
+    throw new ResetError(
+      `Multiple admins exist (${admins.map((a) => a.username).join(', ')}). ` +
+      'Set EXOTICK_RESET_USERNAME to choose which one to reset.'
+    );
+  }
+
+  // Pick the new password.
+  let newPassword: string;
+  const envPw = process.env.EXOTICK_RESET_PASSWORD;
+  if (typeof envPw === 'string') {
+    if (envPw.length < MIN_PASSWORD_LEN) {
+      throw new ResetError(`EXOTICK_RESET_PASSWORD must be at least ${MIN_PASSWORD_LEN} characters.`);
+    }
+    newPassword = envPw;
+  } else if (process.stdin.isTTY) {
+    process.stdout.write(`\nResetting the password for admin "${target.username}".\n`);
+    newPassword = await askNewPassword();
+  } else {
+    throw new ResetError('No interactive terminal and EXOTICK_RESET_PASSWORD is not set — nothing to do.');
+  }
+
+  db.prepare('UPDATE users SET password_hash = ?, disabled_at = NULL WHERE id = ?')
+    .run(hashPassword(newPassword), target.id);
+  destroyAllSessionsForUser(target.id);
+  writeEvent({ eventType: 'password_reset', actor: 'reset-admin-cli', reason: `target: ${target.username} (host CLI reset)` });
+
+  console.log(`\n[exotick] Password reset for admin "${target.username}". All of that admin's sessions were revoked.`);
 }

@@ -7,13 +7,13 @@ Simple yet powerful self-hosted test case management.
 - PDF export for completed test runs, backup import/export
 - User roles with limited permissions
 
-One process, one SQLite file. Runs on a laptop, a LAN box, or a VPS. For small teams and basic requirements.
+One process, one SQLite file. Runs on a laptop, a LAN box, or a VPS. For small teams and basic needs.
 
 ---
 
 ## Showcase
 
-**Build a library** — add cases one at a time or in bulk, and organize them into sections:
+**Build a library** — add cases one at a time or in bulk, and organize them into sections or leave unsectioned:
 
 ![Add cases and sections](docs/screens/gif-1-library.gif)
 
@@ -42,7 +42,7 @@ npm run dev       # starts backend :3001 + client :5173
 
 Open http://localhost:5173.
 
-On first launch the terminal prompts for an admin username and password. Sign in via web, done. Change the admin password later at **Settings › Change my password**. <mark>No way to restore forgotten admin password</mark>, must drop database and start over. Add teammates at **Settings › Users** (roles: editor / runner / watcher).
+On first launch the terminal prompts for an admin username and password. Sign in via web, done. Change the admin password later at **Settings › Change my password**. Forgot it and locked out? Reset it from the host in one command — see [Forgot the admin password?](#forgot-the-admin-password) below. Add teammates at **Settings › Users** (roles: editor / runner / watcher).
 
 For Docker or headless boot, `EXOTICK_ADMIN_USERNAME` + `EXOTICK_ADMIN_PASSWORD` env vars replace the prompt. Both are ignored once an admin exists.
 
@@ -118,6 +118,24 @@ yourname.duckdns.org {
 ```
 
 Reload Caddy — it fetches a real Let's Encrypt cert within a minute. Anything else (self-signed, mkcert, Tailscale, Cloudflare Tunnel) is a choice for your deployment.
+
+---
+
+## Forgot the admin password?
+
+There's no email/self-service reset by design — exotick is self-hosted, so recovery lives on the host (whoever runs it has shell / container access). One command resets the admin password and revokes that admin's sessions. No need to drop the database.
+
+**Local:**
+```bash
+npm run reset-admin
+```
+
+**Docker:**
+```bash
+docker compose exec exotick node server/dist/reset-admin-cli.js
+```
+
+Both prompt for the new password (hidden input, entered twice). For unattended use, set `EXOTICK_RESET_PASSWORD` before running (and `EXOTICK_RESET_USERNAME` only if you've created more than one admin). Simplest of all: store the admin password in a password manager and you'll never need this.
 
 ---
 
