@@ -86,10 +86,10 @@ New-NetFirewallRule -DisplayName "exotick (Vite 5173)" -Direction Inbound `
 
 **Docker (VPS)** —
 ```bash
-$EDITOR docker-compose.yml       # set EXOTICK_ADMIN_PASSWORD
-docker compose up -d --build
+cp .env.example .env             # then set EXOTICK_ADMIN_PASSWORD in .env
+docker compose up -d --build     # compose refuses to start until it's set
 ```
-Container binds to `127.0.0.1:3001`. Data (`cms.db`, `uploads/`, `branding/`) persists in the `exotick-data` volume across rebuilds.
+`docker compose` reads `.env` automatically. `EXOTICK_ADMIN_USERNAME` defaults to `admin`; `EXOTICK_ADMIN_PASSWORD` has no default — compose fails fast with a clear error until you set it, so no publicly-known default password ever ships. Both are ignored once an admin exists. Container binds to `127.0.0.1:3001`. Data (`cms.db`, `uploads/`, `branding/`) persists in the `exotick-data` volume across rebuilds.
 
 **HTTPS** — TLS is your responsibility. Put a reverse proxy in front (Caddy, nginx, Traefik) and terminate TLS there. Real domain + Let's Encrypt is the low-friction path — `deploy/Caddyfile.example` is a starter. No domain? Register a free dynamic-DNS hostname ([DuckDNS](https://www.duckdns.org), [dynv6](https://dynv6.com)), point it at your public IP, forward ports **80** and **443** to your host, and drop this into your Caddyfile:
 
