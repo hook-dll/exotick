@@ -42,7 +42,7 @@ npm run dev       # starts backend :3001 + client :5173
 
 Open http://localhost:5173.
 
-On first launch the terminal prompts for an admin username and password. Sign in via web, done. Change the admin password later at **Settings › Change my password**. Forgot it and locked out? Reset it from the host in one command — see [Forgot the admin password?](#forgot-the-admin-password) below. Add teammates at **Settings › Users** (roles: editor / runner / watcher).
+On first launch the terminal prompts for an admin username and password. Sign in via web, done. Change the admin password later at **Settings › Change my password**. Forgot it and locked out? Reset it from the host in one command — see [Password recovery](#password-recovery) below. Add teammates at **Settings › Users** (roles: editor / runner / watcher).
 
 For Docker or headless boot, `EXOTICK_ADMIN_USERNAME` + `EXOTICK_ADMIN_PASSWORD` env vars replace the prompt. Both are ignored once an admin exists.
 
@@ -121,9 +121,17 @@ Reload Caddy — it fetches a real Let's Encrypt cert within a minute. Anything 
 
 ---
 
-## Forgot the admin password?
+## Password recovery
 
-There's no email/self-service reset by design — exotick is self-hosted, so recovery lives on the host (whoever runs it has shell / container access). One command resets the admin password and revokes that admin's sessions. No need to drop the database.
+There's no email/self-service reset by design. How you get back in depends on the role.
+
+### Editors, runners, watchers — ask the admin
+
+There's no self-reset for regular users. If you're locked out, contact your admin: they reset your password at **Settings › Users › Reset password** and hand you the new one (that also signs you out everywhere, so an old stolen session can't linger). Change it to something of your own from **Settings › Change my password** afterwards.
+
+### Admin — reset from the host
+
+The admin has no one above them, so recovery lives on the host — which is fine, because whoever runs exotick has shell / container access. One command resets the admin password and revokes that admin's sessions. No need to drop the database.
 
 **Local:**
 ```bash
