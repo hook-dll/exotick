@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# User data — the SQLite DB and uploaded images live here.
+# The app auto-creates data/cms.db on first run, so a fresh clone
+# starts empty (no leaked test cases, runs, or images).
+data/
+
+# Environment / secrets
+.env
+.env.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code — personal, machine-local settings (permission allowlists, local
+# paths). Shared project config (.claude/settings.json) stays tracked; this one
+# is per-developer and must not be committed.
+.claude/settings.local.json
+
+# Local Playwright output from the verify script
+verify-screenshots/
+
+# Bundled Unicode fonts for PDF export (drop your own into server/fonts/
+# if you want cross-platform Cyrillic; keep them out of git if you can't
+# redistribute the .ttf license).
+server/fonts/*.ttf

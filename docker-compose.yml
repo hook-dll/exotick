@@ -1,0 +1,42 @@
+services:
+  exotick:
+    build: .
+    image: exotick:latest
+    container_name: exotick
+    restart: unless-stopped
+
+    # Bound to loopback: Caddy (or nginx) on the host is the internet-facing
+    # surface and terminates TLS. Change to "3001:3001" if you want to reach
+    # the container directly on the LAN without a reverse proxy — but then
+    # you're serving plain HTTP.
+    ports:
+      - "127.0.0.1:3001:3001"
+
+    volumes:
+      # SQLite DB and uploads live under /data. Named volume keeps it out of
+      # the compose project directory; swap for a bind mount (e.g.
+      # "./data:/data") if you'd rather see the files.
+      - exotick-data:/data
+
+    environment:
+      # First-run admin bootstrap. Docker containers don't have interactive
+      # stdin by default (the interactive prompt in local `npm run dev`
+      # doesn't apply here), so credentials MUST be provided via these
+      # env vars. Ignored after any admin exists in the DB.
+      #
+      # The password is intentionally NOT defaulted: `:?` makes `docker compose`
+      # refuse to start with a clear error until you set EXOTICK_ADMIN_PASSWORD
+      # (copy .env.example to .env and edit it, or export it in your shell).
+      # This prevents shipping a publicly-known default credential.
+      EXOTICK_ADMIN_USERNAME: ${EXOTICK_ADMIN_USERNAME:-admin}
+      EXOTICK_ADMIN_PASSWORD: ${EXOTICK_ADMIN_PASSWORD:?Set EXOTICK_ADMIN_PASSWORD (see .env.example) before running compose}
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  exotick-data:

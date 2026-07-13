@@ -1,0 +1,17 @@
+I need a content management system (CMS) for test cases.
+
+The following is a description of how I see it working for me.
+
+In such a system, a test case is a line where a brief description of the test case is entered. This line contains a field where you can select pass, fail, or skip.
+There should be sections, which are lines where a brief description of the section is entered. Any set of test cases can be grouped into a section.
+
+Usage:
+I manually fill out, add, or delete test cases, organize them into sections, and save them in the database (Edit Mode).
+I define a set of test cases that I'll need for a specific test; I can name this set (Compose Test Run Mode).
+I start working with a specific set of test cases that I've named and enter pass or fail in the field for each test case (Start Test Run Mode).
+I finish working with a test run; all passed or failed results are saved for that test run, all unmarked test cases from that test run are marked as skip, and the test run results are written to the database (Finish Test Run Mode).
+I can view the history of completed test runs, see which test cases were included in a particular test run, and see the pass, fail, or skip statuses for the tests performed. (Search Completed Test Runs)
+
+Additionally:
+If I accidentally close the frontend during a test run, all changes made (pass and fail) are stored in the database, and I can easily return to the current test run. Skip is only applied after manually terminating the test run.
+A complete list of all test cases, as well as completed test runs, can be exported to PDF.

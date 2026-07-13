@@ -1,0 +1,982 @@
+================================================================================
+exotick — Developer / Maintainer Reference
+================================================================================
+Last updated: 2026-07-12
+
+Everything a maintainer needs to reconstruct or modify the system. Dry and
+authoritative. If it isn't here, it isn't a stable feature.
+
+
+================================================================================
+1. STACK
+================================================================================
+Frontend  React 18, TypeScript, Vite 5, Tailwind 3, React Router v6,
+          react-markdown + remark-gfm
+Backend   Node.js 24, Express 4, TypeScript, tsx (dev watch),
+          node:sqlite (built-in — no native deps), multer, fflate (pure-JS
+          zip), pdfkit, node:crypto (scrypt, sha256, randomBytes),
+          cookie-parser
+Database  SQLite at data/cms.db (WAL journal, foreign_keys ON)
+Ports     dev: backend 3001, client 5173; prod: 3001 only (Express serves
+          the built SPA)
+
+
+================================================================================
+2. DIRECTORY STRUCTURE
+================================================================================
+exotick/
+  package.json                    root — concurrently runs both dev servers;
+                                  build/start scripts; cross-env
+  Dockerfile                      multi-stage build (Node 24 alpine → runtime),
+                                  non-root exotick user, HEALTHCHECK on
+                                  /api/health, EXPOSE 3001
+  docker-compose.yml              single exotick service, exotick-data named
+                                  volume at /data, admin bootstrap env vars.
+                                  Container binds to 127.0.0.1:3001;
+                                  TLS termination is expected to happen in
+                                  whatever reverse proxy the operator sets
+                                  up on the host — the app never speaks TLS
+                                  itself. See readme.md > HTTPS.
+  .dockerignore                   excludes node_modules, dist, data, docs, git
+  start-users.bat                 Windows launcher — sets admin bootstrap vars
+  readme.md                       user-facing docs
+  project_summary.txt             this file
+  deploy/
+    Caddyfile.example             Small starter Caddyfile — swap the
+                                  domain, drop into /etc/caddy/Caddyfile,
+                                  reload. Purely a reference; operators
+                                  bring their own reverse proxy (nginx,
+                                  Traefik, etc. all fine).
+  data/                           gitignored; created on first run
+    cms.db                        SQLite database
+    cms.db-shm, cms.db-wal        SQLite WAL sidecars (transient)
+    uploads/                      user-uploaded images referenced by notes
+    branding/                     admin-uploaded logo (single file)
+  server/
+    package.json
+    tsconfig.json                 CommonJS, ES2020, strict
+    src/
+      index.ts                    Express app entry; trust proxy=1;
+                                  cookie-parser; json body 5mb; bootstrap
+                                  admin; session prune scheduler;
+                                  /api/health; /uploads (requireAuth-gated,
+                                  X-Content-Type-Options: nosniff);
+                                  /branding (public static, nosniff);
+                                  /api/branding + /api/auth (public
+                                  routers); global requireAuth on /api;
+                                  routers mounted; unknown-/api 404 JSON;
+                                  prod SPA fallback; graceful shutdown
+                                  (SIGTERM/SIGINT). No CORS middleware —
+                                  the app is single-origin (Vite proxy in
+                                  dev, Caddy in prod).
+      db.ts                       DatabaseSync init, DDL, idempotent
+                                  migrations (test_cases.notes,
+                                  test_run_items.snapshot_notes,
+                                  test_run_items.updated_by,
+                                  sections.color, users role CHECK rebuild
+                                  when 'watcher' missing), transaction()
+                                  helper, DATA_DIR + UPLOADS_DIR exports
+      pdfFonts.ts                 resolves Unicode TTF for pdfkit at module
+                                  load (server/fonts/, Windows fonts,
+                                  DejaVu, Helvetica fallback). Cached, no
+                                  per-request fs scan.
+      auth/
+        passwords.ts              scrypt hashPassword/verifyPassword,
+                                  format: scrypt$N$r$p$saltB64$hashB64,
+                                  timingSafeEqual
+        sessions.ts               UserRow, SessionRow types;
+                                  hashSid (sha256, base64url); createSession
+                                  returns raw ID for cookie; resolveSession
+                                  hashes-then-lookup, slides expiry when
+                                  >24h; destroySessionByRawId,
+                                  destroySessionByStoredId,
+                                  destroyAllSessionsForUser,
+                                  pruneExpiredSessions, listSessionsForUser;
+                                  SESSION_COOKIE_NAME='exotick_sid';
+                                  SESSION_TTL: 30 days
+        middleware.ts             RequestUser type; requireAuth (cookie
+                                  lookup; 401 on failure); ROLE_RANK
+                                  {watcher:1, runner:2, editor:3, admin:4};
+                                  requireRole; requireCanRun (editor OR
+                                  runner only — admin is deliberately
+                                  excluded from the test-run workflow)
+        bootstrap.ts              bootstrapAdmin (async):
+                                    - if an active admin exists → no-op
+                                    - else if EXOTICK_ADMIN_USERNAME +
+                                      EXOTICK_ADMIN_PASSWORD are set (Docker
+                                      / CI path) → create admin from env
+                                    - else if stdin is a TTY → prompt for
+                                      username + confirmed password
+                                      (askLine / askSecret via raw mode)
+                                    - else → throw BootstrapError with a
+                                      checklist and both fallback paths.
+                                  Idempotent; safe to call every boot.
+        bootstrap-cli.ts          Standalone entry (../bootstrap-cli.ts)
+                                  that runs bootstrapAdmin and exits.
+                                  Wired to the root `predev` npm hook so
+                                  `npm run dev` prompts once before
+                                  concurrently spins up Vite + tsx watch.
+        rateLimit.ts              progressive lockout used by /login (keyed
+                                  per-IP) and /change-password (keyed
+                                  per-user):
+                                  5 failed attempts → 5 min lock, next 5
+                                  → 50 min, next 5 → 500 min (indefinite
+                                  cap). Tier persists across the wait;
+                                  a successful hit clears the bucket.
+                                  API: check(key) / recordFailure(key) /
+                                  reset(key). Idle buckets pruned every
+                                  15 min (24 h without activity, only when
+                                  not currently locked).
+      routes/
+        libraries.ts              GET / (any authed); router.use
+                                  requireRole('editor') below; POST /,
+                                  PUT /reorder, PUT /:id, DELETE /:id.
+                                  DELETE refuses when any test_run still
+                                  references the library OR when it's the
+                                  last one remaining (there must always
+                                  be at least one container).
+        sections.ts               GET /?library_id=N (read, any auth,
+                                  library_id required); router.use
+                                  requireRole('editor') below; POST / (
+                                  requires library_id in body),
+                                  PUT /reorder, POST /bulk-delete,
+                                  POST /merge (all participants must be
+                                  in the same library), PUT /:id,
+                                  DELETE /:id
+        testCases.ts              editor+ throughout; POST / (requires
+                                  library_id), POST /bulk (requires
+                                  library_id), PATCH /reorder (requires
+                                  library_id), PATCH /bulk-move (requires
+                                  library_id), POST /bulk-delete,
+                                  POST /bulk-duplicate (duplicates land
+                                  in the SAME library as each source),
+                                  PUT /:id (cross-library section moves
+                                  rejected), DELETE /:id
+        testRuns.ts               GET /?status=&library_id= (both
+                                  filters optional; response carries
+                                  library_name and server-computed
+                                  cooldown_active boolean per row —
+                                  timestamps for last-activity are NOT
+                                  returned so the wire doesn't leak when
+                                  the current runner last acted).
+                                  GET /:id (adds items[]; items strip
+                                  updated_at for the same privacy
+                                  reason — snapshots + status + updated_by
+                                  only). POST / requireCanRun — compose;
+                                  derives library_id from selected
+                                  case_ids and REJECTS with 400 if the
+                                  selection spans multiple libraries;
+                                  also rejects runner_name that resolves
+                                  to an admin. POST /:id/start
+                                  requireCanRun + assertOwnership;
+                                  POST /:id/take-over requireCanRun —
+                                  reason ≥ 10 chars, cooldown window
+                                  read from settings.take_over_cooldown_
+                                  minutes (0 disables the check; 10-char
+                                  reason still applies), 409 with a vague
+                                  "This runner seems to be active" body
+                                  (no minutes-left leaked). ONLY active
+                                  runs are eligible — drafts (composing)
+                                  and completed runs are rejected with
+                                  400 "Only active runs can be taken
+                                  over." Writes an event_log row on
+                                  success.
+                                  PATCH /items/:itemId requireCanRun +
+                                  assertOwnership + stamps updated_by;
+                                  POST /:id/finish requireCanRun +
+                                  assertOwnership + stamps updated_by on
+                                  auto-skipped rows; DELETE /:id
+                                  requireRole('editor') (editors: DRAFT
+                                  runs only; ACTIVE + COMPLETED → admin)
+        auth.ts                   GET /me (public — returns { user } or
+                                  { user: null }); POST /login (rate-
+                                  limited, uniform-error, raw session in
+                                  cookie); POST /logout;
+                                  POST /change-password (requireAuth, kills
+                                  other sessions); GET /sessions
+                                  (requireAuth); DELETE /sessions/:id
+                                  (requireAuth; own session only, storedId)
+        users.ts                  GET /roster (any authenticated user,
+                                  usernames of active users);
+                                  router.use requireRole('admin') for the
+                                  rest; GET /, POST / (create), PATCH /:id
+                                  (role or disabled), POST /:id/reset-password
+                                  (kills sessions), DELETE /:id;
+                                  last-active-admin guards on
+                                  disable/demote/delete
+        export.ts                 GET /test-cases (PDF, ?ids=... subset),
+                                  GET /test-runs/:id (PDF, includes
+                                  Contributors summary from items'
+                                  updated_by); Cache-Control: no-store on
+                                  both
+        upload.ts                 POST / (editor+, multer disk storage,
+                                  extension+mimetype whitelist for PNG/JPG/
+                                  GIF/WebP — no SVG, 10 MB)
+        backup.ts                 admin+ throughout; per-library scope.
+                                  GET /export?library_id=N (.zip with
+                                  backup.json — carrying library.name —
+                                  + uploads/ referenced by notes).
+                                  POST /import (multipart on-disk temp
+                                  file up to 100 MB) supports three modes:
+                                    new     → create a fresh library
+                                              named after backup.library
+                                              .name (with "(n)" bump if
+                                              taken); never touches
+                                              existing libraries
+                                    merge   → append into target_library_id
+                                    replace → wipe target_library_id's
+                                              sections + cases, then
+                                              restore
+                                  Guards against zip bombs by capping
+                                  entry count / per-entry size / total
+                                  inflated size. Legacy 'testcms-backup'
+                                  and v1/v2 'exotick-backup' formats read
+                                  as if `mode=new` regardless of the
+                                  mode flag (they don't carry a library
+                                  identity).
+        samples.ts                editor+; POST /load ALWAYS creates a
+                                  new library called "Samples" (or
+                                  "Samples (2)" if taken) and seeds it.
+                                  Never touches existing libraries.
+        settings.ts               GET /take-over-cooldown (any authed;
+                                  returns {minutes}); PUT (admin, range
+                                  0-10080). getCooldownMinutes() helper
+                                  is imported by testRuns.ts. Backed by
+                                  the existing `settings` key/value table
+                                  under key `take_over_cooldown_minutes`.
+        log.ts                    admin+ throughout. This is NOT a full
+                                  audit of every user action — it only
+                                  captures events that carry a reason
+                                  (currently take over). GET / returns
+                                  the latest 200 rows (newest first) plus
+                                  a total count; older history via
+                                  GET /export.csv which STREAMS the file
+                                  row-by-row (no in-memory buffer).
+                                  Written to on every successful take-
+                                  over from routes/testRuns.ts.
+        branding.ts               data/branding/ auto-created;
+                                  ALLOWED_EXT (png/jpg/jpeg/webp — no SVG,
+                                  no XSS surface); multer 2 MB; NAME_KEY
+                                  'app_name', LOGO_KEY 'app_logo_file' in
+                                  settings; GET / (public — used by login
+                                  screen); POST / (requireAuth + requireRole
+                                  ('admin'), multipart; validates name ≤ 40;
+                                  deletes previous logo on upload/clear);
+                                  unlinkLogo refuses paths outside
+                                  BRANDING_DIR
+  client/
+    package.json                  React, vite, react-router, react-markdown
+    vite.config.ts                Vite server: host: true (LAN); proxy
+                                  /api, /uploads, /branding → 3001
+    tsconfig.json                 ESNext, jsx react-jsx, strict
+    tsconfig.node.json            for vite.config.ts
+    postcss.config.js             tailwind + autoprefixer
+    tailwind.config.js            (default)
+    index.html                    <title> is set dynamically by
+                                  BrandingContext at runtime; pre-paint
+                                  theme script reads 'exotick-theme'
+                                  localStorage key
+    src/
+      main.tsx                    ReactDOM.createRoot(<App />)
+      App.tsx                     BrowserRouter > BrandingProvider >
+                                  AuthProvider > AppShell; NavItem;
+                                  UserBadge (top of sidebar under logo, no
+                                  bg — no selected-item aliasing);
+                                  ThemeToggle (pastel easter-egg);
+                                  RequireAuth redirects to /login when no
+                                  user; role-based nav visibility
+                                  (canEdit, canRun)
+      api.ts                      fetch wrappers; RateLimitError; global
+                                  setOnUnauthorized hook; req() JSON helper
+                                  + reqMultipart() FormData helper (both
+                                  fire onUnauthorized on 401); exports
+                                  backupExportUrl(library_id) and
+                                  testCasesPdfUrl(library_id, ids?) for
+                                  <a href> downloads. api.libraries
+                                  {list, create, rename, delete, reorder},
+                                  sections, testCases, testRuns (list
+                                  takes { status?, library_id? }),
+                                  auth {me, login, logout, changePassword,
+                                  listSessions, revokeSession}, users
+                                  {roster, list, create, update,
+                                  resetPassword, delete}, samples,
+                                  backup {import — new/merge/replace},
+                                  branding {get, update}, upload {image}
+      types.ts                    SectionColor, Section, TestCase,
+                                  TestRun (with library_id + library_name
+                                  + cooldown_active?), TestRunWithItems,
+                                  TestRunItem (with updated_by; no
+                                  updated_at — privacy), Library,
+                                  LogEvent (with library_id + library_name
+                                  snapshots), Role, User, AuthMe,
+                                  AdminUser, SessionSummary, Branding
+      theme.ts                    useTheme hook (light/dark/pastel,
+                                  pastel via 7 clicks within 1.5s each)
+      index.css                   Tailwind + centralized dark/pastel remap +
+                                  section-tint-* classes
+      util/
+        serverDate.ts             parseServerTs — normalizes SQLite
+                                  "YYYY-MM-DD HH:MM:SS" UTC-without-Z
+                                  strings to canonical ISO before
+                                  Date.parse. Used by every elapsed-time
+                                  computation on the client.
+      library/
+        LibraryContext.tsx        LibraryProvider + useLibrary. Fetches
+                                  /api/libraries when a user is signed in;
+                                  clears on sign-out. Persists the active
+                                  library id in localStorage under
+                                  'exotick.activeLibraryId'. On boot
+                                  reconciles the stored id against the
+                                  live list, falls back to the first
+                                  library if the stored one is gone.
+        LibraryPicker.tsx         Reusable <select> — used by Edit Mode
+                                  and Compose. `onChange` is optional so
+                                  Compose can hook it (confirm-clear-
+                                  selection when switching mid-compose).
+      auth/
+        AuthContext.tsx           AuthProvider + useAuth; fetches /me at
+                                  boot, exposes {user, isLoading, login,
+                                  logout, refresh}; refresh() coalesces
+                                  concurrent calls onto one in-flight
+                                  promise (login can await pending refresh
+                                  instead of racing); wires
+                                  setOnUnauthorized to auto-clear user on
+                                  a mid-session 401
+      branding/
+        BrandingContext.tsx       BrandingProvider + useBranding; fetches
+                                  /api/branding at boot; document.title
+                                  synced with name (default 'exotick');
+                                  logoUrl gets cache-buster ?v= on refresh
+        Brand.tsx                 Reusable Brand component with 'dark'|
+                                  'light' variant; renders custom logo
+                                  <img> (32×32 rounded, object-cover) or
+                                  default gradient checkmark tile; name
+                                  from context
+      components/
+        MarkdownView.tsx          react-markdown + remark-gfm with Tailwind
+                                  prose classes
+        TakeOverDialog.tsx        Modal used by Dashboard + ActiveTestRun;
+                                  reason textarea + live char counter;
+                                  submit disabled until trimmed length
+                                  ≥ 10; surfaces 409 cooldown errors
+                                  inline
+      pages/
+        Login.tsx                 RateLimitError shows a live countdown
+                                  ("Wait 42s"); uses Brand variant="light"
+        Dashboard.tsx             Active + composing sections; runs
+                                  render library_name alongside runner_
+                                  name; per-run ownership check
+                                  (isMine); Resume when own, View + Take
+                                  over otherwise; cooldownMinutesLeft
+                                  (via parseServerTs) disables Take over
+                                  during cooldown with tooltip;
+                                  role-gated shortcut tiles
+        EditMode.tsx              Library toolbar at the top (Picker +
+                                  Rename + Delete + New library, all
+                                  inline). Sections + cases CRUD scoped
+                                  to active library; every API call
+                                  passes library_id. Colors, notes,
+                                  images, bulk ops. Backup buttons
+                                  admin-only, hit
+                                  backupExportUrl(activeLibraryId);
+                                  import modal offers new/merge/replace
+                                  and switches to the newly-created
+                                  library when mode=new. Image upload
+                                  routed through api.upload.image so a
+                                  mid-edit 401 also triggers /login
+                                  redirect; auto-dismiss success flash
+                                  after 4s.
+        ComposeTestRun.tsx        Library picker at the top; switching
+                                  mid-compose confirms + clears the case
+                                  selection (server also rejects cross-
+                                  library composition). Sticky top
+                                  panel (Run + Runner); runner field is
+                                  a dropdown from /api/users/roster
+                                  (any authed user); per-case picker
+                                  with TriCheckbox.
+        ActiveTestRun.tsx         Split layout; role/ownership-driven UI:
+                                  hides Pass/Fail + Finish for watchers
+                                  and non-owners; static status pills for
+                                  watchers; amber banner + Take over
+                                  button ONLY for editor/runner non-owners
+                                  (watchers + admin see silent read-only).
+                                  Take over locked state comes from the
+                                  server-authoritative run.cooldown_active
+                                  boolean — no client-side timestamp math.
+        History.tsx               List of completed runs with a library
+                                  filter dropdown (shown only when
+                                  multiple libraries exist).
+        HistoryDetail.tsx         Header shows library_name alongside
+                                  run title. Summary + Contributors chip
+                                  list from items.updated_by; Delete Run
+                                  role-gated (editor+); plain confirm
+                                  modal; export PDF link.
+        Settings.tsx              Change my password (all users), Active
+                                  sessions (all users), Branding (admin),
+                                  Users (admin, self filtered out).
+                                  ASSIGNABLE_ROLES = editor/runner/watcher
+                                  in every picker; admin has no
+                                  self-manage buttons in the list.
+
+  docs/                           Screenshots + capture scripts (not
+                                  included in Docker image)
+
+
+================================================================================
+3. DATABASE SCHEMA
+================================================================================
+
+libraries
+  id             INTEGER PK AUTOINCREMENT
+  name           TEXT NOT NULL
+  order_index    INTEGER NOT NULL DEFAULT 0
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+
+sections
+  id             INTEGER PK AUTOINCREMENT
+  name           TEXT NOT NULL
+  order_index    INTEGER NOT NULL DEFAULT 0
+  color          TEXT                          NULL, or one of red/orange/
+                                                yellow/green/blue/purple
+  library_id     INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+
+test_cases
+  id             INTEGER PK AUTOINCREMENT
+  section_id     INTEGER REFERENCES sections(id) ON DELETE SET NULL
+  description    TEXT NOT NULL                 title/name of the case
+  notes          TEXT                          markdown; may embed /uploads/*
+  order_index    INTEGER NOT NULL DEFAULT 0
+  library_id     INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+
+test_runs
+  id             INTEGER PK AUTOINCREMENT
+  name           TEXT NOT NULL
+  runner_name    TEXT                          current runner (may change on
+                                                take over); NULL only in
+                                                degenerate cases
+  status         TEXT NOT NULL DEFAULT 'composing'
+                 CHECK(status IN ('composing','active','completed'))
+  library_id     INTEGER NOT NULL REFERENCES libraries(id) ON DELETE RESTRICT
+                                                  — the FK backstops the
+                                                  app-layer 409 guard when
+                                                  a library has runs
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+  started_at     DATETIME
+  finished_at    DATETIME
+
+test_run_items
+  id                       INTEGER PK AUTOINCREMENT
+  test_run_id              INTEGER NOT NULL REFERENCES test_runs(id) ON DELETE CASCADE
+  test_case_id             INTEGER REFERENCES test_cases(id) ON DELETE SET NULL
+  snapshot_description     TEXT NOT NULL       copied at compose time
+  snapshot_notes           TEXT                copied at compose time
+  snapshot_section_name    TEXT                copied at compose time
+  order_index              INTEGER NOT NULL DEFAULT 0
+  status                   TEXT CHECK(status IN ('pass','fail','skip'))
+                                                NULL until marked
+  updated_at               DATETIME            written on every mark/finish
+  updated_by               TEXT                username of the actor;
+                                                NULL only on rows written
+                                                before the column existed
+
+settings                   key/value store. Known keys:
+                             app_name                       branding name
+                             app_logo_file                  branding logo
+                             take_over_cooldown_minutes     admin-tunable
+                                                            take over
+                                                            cooldown;
+                                                            default 60,
+                                                            range 0-10080.
+                             (edit_password_hash rows from previous versions
+                             are ignored — password mode is gone.)
+  key                      TEXT PK
+  value                    TEXT
+
+event_log                  Append-only log of named actions:
+                              login           — successful authentication
+                              edit            — any mutation to libraries /
+                                                sections / test cases
+                              compose         — new test run created
+                              start           — run entered active state
+                              finish          — run entered completed state
+                              take_over       — runner_name changed via
+                                                the take over flow (also
+                                                carries reason +
+                                                previous_runner)
+                              password_change — user changed their own
+                                                password
+                              password_reset  — admin reset someone else's
+                                                password; target username
+                                                stored in the reason field
+                                                (`target: <username>`)
+                            Rows persist independently of test_runs so
+                            deleting a run does NOT wipe log history
+                            (test_run_id → NULL, test_run_name stays).
+                            Deliberately NOT a full audit trail: no
+                            reads, no individual case marks, no
+                            actor-role snapshot. NOT included in backup
+                            exports. An earlier version was named
+                            `audit_log`; db.ts migrates it in place
+                            if legacy rows are present.
+  id                       INTEGER PK AUTOINCREMENT
+  created_at               DATETIME DEFAULT CURRENT_TIMESTAMP
+  event_type               TEXT NOT NULL       'take_over' initially
+  actor_username           TEXT NOT NULL
+  test_run_id              INTEGER REFERENCES test_runs(id) ON DELETE SET NULL
+  test_run_name            TEXT                snapshot — survives run
+                                                deletion so the row stays
+                                                readable
+  previous_runner          TEXT                who owned the run before
+  reason                   TEXT                the ≥10-char reason typed
+                                                at take over time
+
+users
+  id             INTEGER PK AUTOINCREMENT
+  username       TEXT NOT NULL UNIQUE COLLATE NOCASE
+  password_hash  TEXT NOT NULL                 scrypt$N$r$p$saltB64$hashB64
+  role           TEXT NOT NULL
+                 CHECK(role IN ('admin','editor','runner','watcher'))
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+  disabled_at    DATETIME                      NULL = active; soft-disable
+  last_login_at  DATETIME
+
+sessions
+  id             TEXT PK                       sha256(rawSid) base64url —
+                                                the raw ID lives only in
+                                                the cookie
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+  expires_at     DATETIME NOT NULL             30-day sliding window
+  user_agent     TEXT
+  ip             TEXT
+
+Indexes:
+  idx_sessions_user_id         ON sessions(user_id)
+  idx_sessions_expires_at      ON sessions(expires_at)
+  idx_sections_library_id      ON sections(library_id)
+  idx_test_cases_library_id    ON test_cases(library_id)
+  idx_test_runs_library_id     ON test_runs(library_id)
+  idx_event_log_created_at     ON event_log(created_at)
+  idx_event_log_test_run_id    ON event_log(test_run_id)
+
+SQLite settings: WAL journal mode, foreign_keys = ON.
+
+Migrations (all idempotent, run on server start):
+  ALTER TABLE test_cases        ADD COLUMN notes TEXT
+  ALTER TABLE test_run_items    ADD COLUMN snapshot_notes TEXT
+  ALTER TABLE test_run_items    ADD COLUMN updated_by TEXT
+  ALTER TABLE sections          ADD COLUMN color TEXT
+  Rebuild users table when the CHECK constraint's SQL doesn't contain
+  'watcher' (detected via sqlite_master.sql):
+    CREATE TABLE users_new ...; INSERT SELECT; DROP; RENAME;
+  Libraries migration (runs once per legacy install):
+    1. CREATE TABLE libraries (…)
+    2. INSERT "Main" row if libraries is empty (id = <DEFAULT_LIBRARY_ID>)
+    3. ALTER TABLE sections   ADD COLUMN library_id INTEGER NOT NULL
+                              DEFAULT <DEFAULT_LIBRARY_ID> REFERENCES
+                              libraries(id) ON DELETE CASCADE
+    4. ALTER TABLE test_cases ADD COLUMN library_id INTEGER NOT NULL
+                              DEFAULT <DEFAULT_LIBRARY_ID> REFERENCES
+                              libraries(id) ON DELETE CASCADE
+    5. ALTER TABLE test_runs  ADD COLUMN library_id INTEGER NOT NULL
+                              DEFAULT <DEFAULT_LIBRARY_ID> REFERENCES
+                              libraries(id) ON DELETE RESTRICT
+    6. CREATE INDEX IF NOT EXISTS on each of the three library_id cols
+  ALTER TABLE ADD COLUMN with NOT NULL DEFAULT populates every existing
+  row with the default value, so all legacy sections/cases/runs land in
+  library id = <DEFAULT_LIBRARY_ID> (i.e. "Main") on first boot.
+
+
+================================================================================
+4. AUTH MODEL
+================================================================================
+
+Every /api request (other than /api/auth/login, /api/auth/logout,
+/api/auth/me, /api/health, and /api/branding GET) requires a valid session
+cookie. requireAuth resolves the cookie against sessions.id (hashed) and
+attaches req.user + req.sessionId. requireRole compares req.user.role
+against the endpoint's minimum via the strict rank {watcher:1, runner:2,
+editor:3, admin:4}.
+
+On first launch (no admin in the DB) the server prompts interactively for
+an admin username + password when stdin is a TTY. In headless / Docker
+contexts the credentials come from EXOTICK_ADMIN_USERNAME +
+EXOTICK_ADMIN_PASSWORD instead. Without either path, the server refuses
+to start. Bootstrap is idempotent — subsequent boots are a no-op.
+
+Roles — hierarchy is admin > editor > runner > watcher for the read /
+edit / management chain, BUT admin is deliberately excluded from the
+runner workflow. See requireCanRun in server/src/auth/middleware.ts.
+
+  Capability                            admin  editor  runner  watcher
+  ------------------------------------  -----  ------  ------  -------
+  Manage users                          ✅     ❌      ❌      ❌
+  Change branding (name + logo)         ✅     ❌      ❌      ❌
+  Backup export/import                  ✅     ❌      ❌      ❌
+  Edit sections / test cases            ✅     ✅      ❌      ❌
+  Delete DRAFT (composing) test runs    ✅     ✅      ❌      ❌
+  Delete ACTIVE / COMPLETED test runs   ✅     ❌      ❌      ❌
+  Upload images (notes)                 ✅     ✅      ❌      ❌
+  Compose a run                         ❌     ✅      ✅      ❌
+  Start / mark / finish a run           ❌     ✅ *    ✅ *    ❌
+  Take over a run                       ❌     ✅      ✅      ❌
+  View everything                       ✅     ✅      ✅      ✅
+
+  * — Only the current runner of THAT run can start/mark/finish. Any
+      editor or runner can take over (subject to reason + cooldown).
+      POST /test-runs also rejects runner_name that resolves to an admin.
+
+The single admin is bootstrapped from env vars and does not appear in the
+Users management UI. The UI never offers 'admin' in role pickers; roles
+are chosen among editor/runner/watcher for all created users.
+
+
+================================================================================
+5. SESSION MODEL
+================================================================================
+
+Cookie:              exotick_sid (HttpOnly, SameSite=Lax, Secure when
+                     req.secure via trust proxy=1)
+Cookie value:        32 random bytes, base64url (43 chars) — the raw ID
+DB storage:          sha256(rawSid) base64url as sessions.id — a leaked
+                     sessions table cannot be used to forge cookies
+Lifetime:            30 days sliding — expiry rewrites when > 24 h since
+                     the last slide
+
+Rate limit on /api/auth/login: progressive per-IP lockout, in-memory.
+  Tier 1: 5 failed attempts     → lock 5 min
+  Tier 2: next 5 failed attempts → lock 50 min
+  Tier 3: next 5 failed attempts → lock 500 min (stays here indefinitely)
+Wrong-user and wrong-password fail identically (no enumeration surface).
+Returns 429 with a Retry-After header (seconds) and a retryAfterMs field
+in the JSON body. Any successful login on the same IP clears everything.
+State is process-local — a server restart resets all lockouts, which is
+usually what you want during recovery.
+
+Rate limit on /api/auth/change-password: SAME ladder, but keyed
+per-user instead of per-IP (key = `pwchange:${user_id}`). A stolen
+session that starts guessing the current password locks the change-
+password endpoint for the whole account, across all of that user's
+sessions. Malformed input (new password < 8 chars) does NOT count as a
+failed attempt against the current password. Successful change clears
+the bucket.
+
+Password change / disable / reset kill all sessions for that user
+except the caller's own where relevant.
+
+
+================================================================================
+6. TEST RUN OWNERSHIP + TAKE OVER
+================================================================================
+
+Ownership check (assertOwnership in routes/testRuns.ts):
+  Fires on POST /:id/start, PATCH /items/:itemId, POST /:id/finish.
+  Loads the run row; compares run.runner_name to req.user.username. Non-
+  owners get 403 with a specific error mentioning the current runner.
+
+Take over (POST /:id/take-over):
+  Requirements:
+    authenticated req.user.username (implicit — every /api call is authed)
+    reason.trim().length ≥ 10 chars (400 otherwise)
+    run.status === 'active' — drafts and completed runs are BOTH
+      rejected with 400 "Only active runs can be taken over."
+      Composing (draft) is deliberately blocked so take over can't be
+      used to steal someone else's in-progress compose.
+    cooldown since last activity (settings.take_over_cooldown_minutes,
+      default 60, admin-configurable; 0 disables timing, reason still
+      required):
+      Activity is MAX(items.updated_at) or, absent that, run.started_at.
+      Comparison runs entirely in SQL via
+      strftime('%s','now') - strftime('%s', last_activity) to avoid the
+      SQLite-UTC-without-Z / JS-parses-as-local footgun.
+      409 with a vague body — no minutes-left leaked on the wire.
+  Effect: UPDATE test_runs SET runner_name = <caller> WHERE id = ?
+          + writeEvent('take_over', ..., previous_runner, reason)
+  Returns updated TestRun.
+
+Per-item authorship:
+  updated_by is written on every PATCH /items and on auto-skips during
+  POST /:id/finish.
+  Contributors summary (History Detail chips + PDF section) aggregates
+  distinct updated_by values with counts, sorted desc.
+
+Composed runner vs current runner:
+  runner_name is BOTH — take over rewrites it. The event_log records who
+  took what over (with reason) — see §? and routes/log.ts. The distinct
+  actors in items.updated_by additionally tell you
+  who actually did work.
+
+
+================================================================================
+7. BRANDING
+================================================================================
+
+settings.app_name           TEXT ≤ 40 chars (empty resets to default
+                            'exotick')
+settings.app_logo_file      current filename in data/branding/
+data/branding/logo-<ts>.<ext>  the actual image; ALLOWED_EXT: png, jpg,
+                            jpeg, webp; max 2 MB. SVG is not accepted —
+                            it's an XML document and could carry <script>
+                            served from the same origin as the login page.
+
+/branding/*                 public static mount (no auth) so the login
+                            screen can render the logo; nosniff header set
+GET /api/branding           public → { name, logoUrl }
+POST /api/branding          requireAuth + requireRole('admin');
+                            multipart; body: name (text), logo (file),
+                            clearLogo=true (bool). Uploading a new logo
+                            deletes the previous file. unlinkLogo
+                            refuses paths outside BRANDING_DIR (defense-
+                            in-depth).
+
+Client cache-buster: BrandingContext appends ?v=<Date.now()> to logoUrl
+on refresh so a newly-uploaded image is picked up without a hard reload.
+
+
+================================================================================
+8. ROUTE GATING TABLE
+================================================================================
+
+All /api routes below /api/auth, /api/health, /api/branding (GET) pass
+through the global requireAuth in server/src/index.ts. That middleware
+resolves the session cookie or returns 401.
+
+Additional guards per route (below applies only after requireAuth passes):
+
+Router               Route                            Additional gate
+-------------------  --------------------------------  ------------------
+libraries            GET /                            (none — any authed)
+                     everything else                  requireRole('editor')
+                     DELETE /:id                      + refuses when a run
+                                                      references the library
+                                                      OR when it's the last
+sections             GET /?library_id=N               (none — any authed)
+                     everything else                  requireRole('editor')
+testCases            everything                       requireRole('editor')
+testRuns             GET /                            (none)
+                     GET /:id                         (none)
+                     POST /                           requireCanRun (+ runner_name-not-admin check)
+                     POST /:id/start                  requireCanRun + assertOwnership
+                     POST /:id/take-over              requireCanRun + reason + cooldown
+                     PATCH /items/:itemId             requireCanRun + assertOwnership
+                     POST /:id/finish                 requireCanRun + assertOwnership
+                     DELETE /:id                      requireRole('editor') + status-check
+                                                        (editors: DRAFT only;
+                                                        ACTIVE + COMPLETED → admin)
+export               GET /test-cases                  (none)
+                     GET /test-runs/:id               (none)
+upload               POST /                           requireRole('editor')
+backup               everything                       requireRole('admin')
+samples              POST /load                       requireRole('editor')
+users                GET /roster                      (none — any authed)
+                     everything else                  requireRole('admin')
+settings             GET /take-over-cooldown          (none — any authed)
+                     PUT /take-over-cooldown          requireRole('admin')
+log                  everything                       requireRole('admin')
+                     GET /                            latest 200 entries
+                     GET /export.csv                  streamed full history
+auth                 GET /me                          (public — mounted before requireAuth)
+                     POST /login                      (public)
+                     POST /logout                     (public)
+                     POST /change-password            requireAuth
+                     GET /sessions                    requireAuth
+                     DELETE /sessions/:id             requireAuth
+branding             GET /                            (public — mounted before requireAuth)
+                     POST /                           requireAuth + requireRole('admin')
+
+/api/health          public
+/uploads             requireAuth + nosniff
+/branding            public static + nosniff
+
+
+================================================================================
+9. ENVIRONMENT VARIABLES
+================================================================================
+
+EXOTICK_ADMIN_USERNAME     2-64 chars [A-Za-z0-9._@+-] — plain handles and
+                           email addresses both work. Consulted only when
+                           no admin exists in the DB and stdin is NOT a TTY
+                           (Docker, CI). Ignored after any admin exists.
+EXOTICK_ADMIN_PASSWORD     ≥ 8 chars. Same rules as ADMIN_USERNAME.
+EXOTICK_DATA_DIR           Path to the data directory. Default:
+                           ../data (dev) / /data (Docker).
+PORT                       Listen port. Default: 3001.
+NODE_ENV                   'production' enables Express static SPA
+                           fallback for /*.
+
+Local dev: `npm run dev` runs the `predev` hook (npm run bootstrap
+--prefix server) first. If no admin exists, this prompts interactively
+in the terminal for username + password; if an admin already exists,
+it's a fast no-op. Vite + tsx watch start only after bootstrap succeeds.
+
+Docker / headless: no interactive stdin, so credentials MUST come from
+the env vars above. On boot with no admin and no env creds and no TTY,
+the server prints a BootstrapError to stderr and exits(1).
+
+
+================================================================================
+10. BUILD / RUN / DEPLOY
+================================================================================
+
+Dev (both servers concurrently):
+  npm run dev
+  → tsx watch server/src/index.ts (backend 3001)
+  → vite (client 5173 with proxy: /api /uploads /branding → 3001)
+
+Windows launcher (double-click):
+  start-users.bat       sets admin bootstrap vars → npm run dev
+
+Production build:
+  npm run build
+  → vite build (client → client/dist)
+  → tsc      (server → server/dist)
+
+Production run:
+  npm start
+  → cross-env NODE_ENV=production node server/dist/index.js
+  Express serves the SPA at /* and 404s /api/*-not-found as JSON.
+
+Docker:
+  docker compose up -d --build
+  Multi-stage Dockerfile: node:24-alpine builder installs all deps and
+  runs the build; runtime stage copies server/dist + client/dist +
+  prod-only node_modules into a slim image, non-root exotick user.
+  HEALTHCHECK: wget /api/health every 30 s.
+  Compose mounts a named volume exotick-data at /data. Container binds
+  to 127.0.0.1:3001; Caddy on the host terminates TLS.
+
+HTTPS:
+  The app speaks plain HTTP on :3001. TLS termination is out of scope —
+  operators put a reverse proxy in front (Caddy, nginx, Traefik) and get
+  certs however they choose. Recommended path in readme.md is a real
+  domain + Let's Encrypt via Caddy; deploy/Caddyfile.example is a small
+  starter for that, but nothing in the repo mandates any specific proxy.
+
+Graceful shutdown:
+  SIGTERM / SIGINT close the HTTP server with a 10s force-exit timer.
+  Ensures Docker rolling restarts don't chop in-flight backup exports.
+
+
+================================================================================
+11. NON-OBVIOUS BEHAVIORS / GOTCHAS
+================================================================================
+
+- SQLite CURRENT_TIMESTAMP writes UTC as 'YYYY-MM-DD HH:MM:SS' WITHOUT
+  a timezone marker. `new Date(str)` parses that as LOCAL time on V8
+  (Node + Chromium). Any elapsed-time computation on the client must
+  route through util/serverDate.ts::parseServerTs, which normalizes to
+  'YYYY-MM-DDTHH:MM:SSZ' first. On the server, take over cooldown uses
+  SQL strftime('%s', 'now') - strftime('%s', last_activity) to avoid the
+  issue entirely. Pure display code (`.toLocaleString()` on runs / items
+  / sessions) does NOT use parseServerTs and can appear offset by the
+  operator's timezone; acceptable but a known cosmetic bug.
+
+- Take over cooldown is admin-tunable via Settings > Take over cooldown
+  (persisted in settings.take_over_cooldown_minutes). Server is
+  authoritative on both the threshold and whether it's currently in
+  effect: routes/testRuns.ts returns cooldown_active as a boolean per run
+  (computed in SQL from strftime diffs). The client never receives raw
+  last-activity timestamps for runs it doesn't own, so it can't work out
+  when the runner last acted. Setting cooldown to 0 disables the timing
+  check entirely; the 10-character reason still applies.
+
+- Session cookie value ≠ sessions.id in DB. Cookie carries the RAW id;
+  DB stores sha256(raw). resolveSession hashes the incoming cookie
+  before lookup. destroySessionByRawId (used in logout) hashes;
+  destroySessionByStoredId (used in the revoke-by-URL endpoint) does not.
+  Row IDs returned by listSessionsForUser ARE the stored (hashed) ids —
+  the client uses them opaquely for the DELETE /sessions/:id endpoint.
+
+- Bootstrap admin is idempotent: no-op when any active admin exists.
+  Consequently, an attacker with shell access to the DB can delete the
+  admin row and then re-run the bootstrap to create a new admin with a
+  chosen password. Mitigation deliberately not implemented; app-level
+  defense doesn't win against host-shell access, and preventing it would
+  break legitimate recovery.
+
+- Backup zip (routes/backup.ts) covers only the test-case library and
+  uploaded images referenced by notes. It does NOT include:
+    - run history (test_runs, test_run_items)
+    - users table
+    - sessions table
+    - branding folder (data/branding/*)
+  Backup import accepts both 'exotick-backup' and legacy 'testcms-backup'
+  format strings. Replace mode deletes only test_cases then sections;
+  test_run_items survive via ON DELETE SET NULL.
+  Import guardrails: 100 MB uploaded, 2000 entries, 25 MB per entry, 500 MB
+  total inflated — beyond that the archive is rejected.
+
+- POST /api/samples/load ALWAYS creates a new library called "Samples"
+  (or "Samples (2)" if that name is taken). Never modifies existing
+  libraries.
+
+- BrandingProvider fetches /api/branding at boot; document.title is
+  synced via useEffect. Custom logo lives in data/branding/, NOT
+  data/uploads/. Backup export won't include it.
+
+- Vite dev proxy must forward /branding as well as /api /uploads.
+  Missing entry produces broken logo images in dev (production is
+  single-origin so it works there).
+
+- The Compose page's runner field is a <select> populated by
+  /api/users/roster. Watchers are ALWAYS filtered out (they can't be
+  runners); admins are filtered out for non-admin callers.
+
+- cooldown status on GET /api/test-runs is a server-computed
+  cooldown_active boolean per row (SQL CASE derived from
+  strftime diffs against settings.take_over_cooldown_minutes). The
+  raw last_activity_at timestamp is never returned — that would leak
+  when the current runner last acted. Client uses the boolean
+  directly to enable/disable the Take over button; no local math.
+
+- The admin's own row is filtered out of the Users table in Settings
+  (client-side). The admin manages their own password via the Change
+  my password card. Prevents accidental self-disable / self-delete.
+
+- Roles: 'admin' is bootstrap-only. UI role pickers (create + per-row
+  dropdown) only offer editor/runner/watcher. Server VALID_ROLES accepts
+  'admin' for completeness but there's no path to create one from the UI.
+
+- No CORS middleware — the app is single-origin (Vite dev proxy,
+  same-origin Caddy in prod). Adding CORS would require also revisiting
+  the SameSite=Lax cookie posture.
+
+- Uploads reject SVG explicitly. Both file extension AND multipart
+  Content-Type must match a raster-image whitelist (PNG/JPG/GIF/WebP for
+  notes, PNG/JPG/WebP for branding). This closes stored XSS via SVG
+  <script>.
+
+- /uploads and /branding are served with X-Content-Type-Options: nosniff
+  as defense in depth so a browser can't override Content-Type.
+
+- trust proxy is set to 1 (not `true`). With a single Caddy in front, this
+  correctly resolves req.ip and honors X-Forwarded-Proto. With no proxy,
+  clients can no longer spoof X-Forwarded-For to fool the rate limiter.
+
+
+================================================================================
+12. QUICK RECOVERY OPS
+================================================================================
+
+Reset all users (retain library + runs):
+  node -e "const {DatabaseSync}=require('node:sqlite');
+  const db=new DatabaseSync('data/cms.db');
+  db.exec(\"DELETE FROM users; DELETE FROM sessions;\");"
+
+Then restart with bootstrap env vars.
+
+Wipe everything (empty install):
+  Delete data/cms.db, data/cms.db-shm, data/cms.db-wal, and (optionally)
+  data/uploads/, data/branding/.
+
+Inspect current state:
+  node -e "const {DatabaseSync}=require('node:sqlite');
+  const db=new DatabaseSync('data/cms.db');
+  console.log(db.prepare('SELECT id,username,role,disabled_at FROM users').all());"
+
+Force-clear rate limit (survives process only):
+  restart the server.
+
+================================================================================

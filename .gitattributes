@@ -1,0 +1,15 @@
+# Normalize all text files to LF in the repository. This project is edited on
+# Windows but built and run on Linux (Docker/Alpine), so committing CRLF would
+# break shell scripts and produce noisy cross-platform diffs. Git still checks
+# files out with native endings locally where relevant.
+* text=auto eol=lf
+
+# Binary assets — never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ttf binary
+*.zip binary
+*.pdf binary

@@ -1,0 +1,194 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Theme tokens ─────────────────────────────────────────────
+   --tc-border drives the bare `border` utility (see tailwind.config.js).
+   --tc-accent* define the app accent (indigo/violet) used by the blue
+   utility remaps below, so the whole palette shifts from one place. */
+:root {
+  --tc-border: #e5e7eb;
+  --tc-accent: #4f46e5;        /* primary buttons, links */
+  --tc-accent-hover: #4338ca;
+  --tc-accent-soft: #eef2ff;   /* tinted hover / alert backgrounds */
+  --tc-accent-ring: #a5b4fc;   /* focus + selection rings */
+  --tc-accent-border: #c7d2fe;
+}
+.dark {
+  --tc-border: #334155;
+  --tc-accent: #6366f1;
+  --tc-accent-hover: #4f46e5;
+  --tc-accent-soft: rgba(99, 102, 241, 0.16);
+  --tc-accent-ring: #818cf8;
+  --tc-accent-border: rgba(99, 102, 241, 0.45);
+  color-scheme: dark;
+}
+
+/* ── Base ─────────────────────────────────────────────────────
+   A refined system font stack (no webfont download — works offline on
+   the LAN host) plus antialiasing for crisper text. */
+html {
+  font-family: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui,
+    -apple-system, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Shape & depth ────────────────────────────────────────────
+   Cards (`bg-white rounded-lg`) get softer corners + a subtle shadow so
+   they read as surfaces rather than bordered boxes. Modals (shadow-xl)
+   keep their own larger shadow. */
+.rounded-lg { border-radius: 0.75rem; }
+
+.bg-white.rounded-lg:not(.shadow-xl) {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04),
+              0 1px 3px rgba(16, 24, 40, 0.07);
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+/* Clickable cards (rendered as <a>/<button>) lift slightly on hover. */
+a.bg-white.rounded-lg:hover,
+button.bg-white.rounded-lg:hover {
+  box-shadow: 0 8px 20px -6px rgba(16, 24, 40, 0.14),
+              0 2px 6px -2px rgba(16, 24, 40, 0.08);
+  transform: translateY(-1px);
+}
+.dark .bg-white.rounded-lg:not(.shadow-xl) {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.dark a.bg-white.rounded-lg:hover,
+.dark button.bg-white.rounded-lg:hover {
+  box-shadow: 0 8px 22px -6px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Pastel easter egg ────────────────────────────────────────
+   Rapid theme toggling unlocks pastel mode (see theme.ts). The app shell
+   background becomes a random soft pastel wash (--tc-pastel, set inline on
+   <html>) while cards stay white and text stays dark, so it reads as a
+   gentle tinted light theme rather than a broken one. `.pastel .app-shell`
+   (0,2,0) beats the bare `.bg-gray-50` utility (0,1,0). */
+.pastel .app-shell,
+.pastel body {
+  background-color: var(--tc-pastel, #f9fafb);
+  transition: background-color 0.3s ease;
+}
+
+/* ── Accent remap (light) ─────────────────────────────────────
+   The app was built on Tailwind's default blue. Remapping those exact
+   utilities here shifts the whole accent to indigo without touching any
+   page. Rules sit after @tailwind utilities, so equal-specificity ones win. */
+.bg-blue-600 { background-color: var(--tc-accent); }
+.hover\:bg-blue-700:hover { background-color: var(--tc-accent-hover); }
+.bg-blue-50 { background-color: var(--tc-accent-soft); }
+.hover\:bg-blue-50:hover { background-color: var(--tc-accent-soft); }
+
+.text-blue-500,
+.text-blue-600,
+.text-blue-700 { color: var(--tc-accent); }
+.text-blue-400 { color: var(--tc-accent-ring); }
+.hover\:text-blue-700:hover { color: var(--tc-accent-hover); }
+
+.border-blue-600 { border-color: var(--tc-accent); }
+.border-blue-300 { border-color: var(--tc-accent-border); }
+.hover\:border-blue-300:hover { border-color: var(--tc-accent-ring); }
+
+.accent-blue-600 { accent-color: var(--tc-accent); }
+.ring-blue-400 { --tw-ring-color: var(--tc-accent-ring); }
+.focus\:ring-blue-400:focus { --tw-ring-color: var(--tc-accent-ring); }
+
+/* ── Dark mode ────────────────────────────────────────────────
+   The app uses a small, consistent palette of Tailwind utilities.
+   Rather than annotate every element with `dark:` variants, we remap
+   those utilities here. `.dark .x` (specificity 0,2,0) beats the bare
+   utility `.x` (0,1,0), so these win everywhere automatically. */
+
+/* Surfaces */
+.dark .bg-white        { background-color: #1e293b; }  /* cards, modals */
+.dark .bg-gray-50      { background-color: #0f172a; }  /* page + inset panels */
+.dark .bg-gray-100     { background-color: #334155; }
+.dark .bg-gray-200     { background-color: #475569; }
+
+/* Form controls (many have no explicit bg class) */
+.dark input,
+.dark textarea,
+.dark select {
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+.dark ::placeholder { color: #64748b; }
+
+/* Text hierarchy */
+.dark .text-gray-800 { color: #f1f5f9; }
+.dark .text-gray-700 { color: #e2e8f0; }
+.dark .text-gray-600 { color: #cbd5e1; }
+.dark .text-gray-500 { color: #94a3b8; }
+.dark .text-gray-400 { color: #7d8ba0; }
+.dark .text-gray-300 { color: #64748b; }
+/* The sidebar is dark chrome in both themes — keep its link text bright. */
+.dark nav .text-gray-300 { color: #d1d5db; }
+
+/* Links / accent text — indigo tones for contrast on dark surfaces */
+.dark .text-blue-500,
+.dark .text-blue-600,
+.dark .text-blue-700 { color: #a5b4fc; }
+.dark .text-blue-400 { color: #c7d2fe; }
+.dark .text-green-600,
+.dark .text-green-700 { color: #4ade80; }
+.dark .text-red-400,
+.dark .text-red-500,
+.dark .text-red-600,
+.dark .text-red-700 { color: #f87171; }
+
+/* Explicit border colors */
+.dark .border-gray-100 { border-color: #263243; }
+.dark .border-gray-200 { border-color: #334155; }
+.dark .border-gray-300 { border-color: #475569; }
+.dark .border-gray-400 { border-color: #64748b; }
+
+/* Subtle tinted backgrounds (alerts, badges) + paired text */
+.dark .bg-green-50,
+.dark .bg-green-100 { background-color: rgba(34, 197, 94, 0.16); }
+.dark .bg-red-50,
+.dark .bg-red-100   { background-color: rgba(239, 68, 68, 0.16); }
+.dark .border-green-200 { border-color: rgba(34, 197, 94, 0.35); }
+.dark .border-red-200   { border-color: rgba(239, 68, 68, 0.35); }
+
+/* Hover states */
+.dark .hover\:bg-gray-50:hover  { background-color: #334155; }
+.dark .hover\:bg-gray-100:hover { background-color: #334155; }
+.dark .hover\:bg-gray-200:hover { background-color: #475569; }
+.dark .hover\:bg-green-50:hover { background-color: rgba(34, 197, 94, 0.2); }
+.dark .hover\:bg-red-50:hover   { background-color: rgba(239, 68, 68, 0.2); }
+.dark .hover\:text-gray-500:hover { color: #cbd5e1; }
+.dark .hover\:text-gray-600:hover { color: #e2e8f0; }
+.dark .hover\:border-gray-400:hover { border-color: #64748b; }
+
+/* ── Section tint colors ──────────────────────────────────────
+   Applied to a section card (Edit Mode, Compose) or a section header row
+   (Active Run, History Detail) to color-code it. The plain `.section-tint-*`
+   selector wins over Tailwind utilities like `.bg-white` (same specificity,
+   defined later in this file). Dark-mode variants use tinted alpha so they
+   read on the dark card surface; in pastel mode cards stay white, so the
+   light values apply and read as gentle groups against the wash. */
+.section-tint-red    { background-color: #fee2e2; }
+.section-tint-orange { background-color: #ffedd5; }
+.section-tint-yellow { background-color: #fef9c3; }
+.section-tint-green  { background-color: #dcfce7; }
+.section-tint-blue   { background-color: #dbeafe; }
+.section-tint-purple { background-color: #f3e8ff; }
+
+.dark .section-tint-red    { background-color: rgba(239, 68, 68, 0.16); }
+.dark .section-tint-orange { background-color: rgba(249, 115, 22, 0.16); }
+.dark .section-tint-yellow { background-color: rgba(234, 179, 8, 0.16); }
+.dark .section-tint-green  { background-color: rgba(34, 197, 94, 0.16); }
+.dark .section-tint-blue   { background-color: rgba(59, 130, 246, 0.18); }
+.dark .section-tint-purple { background-color: rgba(168, 85, 247, 0.18); }
+
+/* Palette swatch dots used in the section color picker — solid samples
+   that show the same hue in every theme so users can pick reliably. */
+.swatch-red    { background-color: #f87171; }
+.swatch-orange { background-color: #fb923c; }
+.swatch-yellow { background-color: #facc15; }
+.swatch-green  { background-color: #4ade80; }
+.swatch-blue   { background-color: #60a5fa; }
+.swatch-purple { background-color: #c084fc; }
