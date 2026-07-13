@@ -233,6 +233,28 @@ async function main() {
   });
   toGif(w4, 'gif-4-branding.gif', { crop: null, width: 900 });
 
+  // ── Scene 5: bulk edit — select a whole section, duplicate, then bulk-move ──
+  const w5 = await runScene('bulk', editorSid, async (page) => {
+    await page.goto(`${BASE}/edit`, { waitUntil: 'load' });
+    await page.locator('select[title="Switch library"]').selectOption({ label: 'Samples' });
+    await page.getByText('Auth', { exact: true }).waitFor();
+    await sleep(800);
+    // Select an entire section (header checkbox ticks the section + all cases).
+    await page.locator('input[title="Select section and all its cases"]').first().click();
+    await sleep(1000); // the sticky bulk-action bar appears
+    // Bulk duplicate the selected cases.
+    await page.getByRole('button', { name: 'Duplicate' }).click();
+    await sleep(1300);
+    // Select a few cases and bulk-move them into another section.
+    const boxes = page.locator('input[title="Select test case"]');
+    await boxes.nth(0).click(); await sleep(300);
+    await boxes.nth(1).click(); await sleep(300);
+    await boxes.nth(2).click(); await sleep(500);
+    await page.locator('select:has(option[value="null"])').selectOption({ label: 'Checkout' });
+    await sleep(1400);
+  });
+  toGif(w5, 'gif-5-bulk.gif', { crop: CONTENT_CROP, width: 820 });
+
   await browser.close();
 }
 

@@ -11,6 +11,24 @@ One process, one SQLite file. Runs on a laptop, a LAN box, or a VPS. For small t
 
 ---
 
+## Showcase
+
+**Build a library** — add cases one at a time or in bulk, and organize them into sections:
+
+![Add cases and sections](docs/screens/gif-1-library.gif)
+
+**Compose & run** — select cases across sections, start the run, and mark pass/fail live:
+
+![Compose and start a run](docs/screens/gif-2-compose.gif)
+
+**Bulk edit** — select a whole section, duplicate, and move cases in one go:
+
+![Bulk edit](docs/screens/gif-5-bulk.gif)
+
+You can find other showcase screenshots (editing a case, branding) in the [`docs/screens`](docs/screens) folder.
+
+---
+
 ## Install
 
 Requirements: **Node.js 24+**.
