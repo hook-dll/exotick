@@ -158,9 +158,9 @@ Switch light/dark modes a few times to defeat boredom.
 
 ## License
 
-This project is source-available under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)** license. 
+This project is **source-available** (not open source). It's licensed under the **MIT License with the [Commons Clause](https://commonsclause.com/) condition**.
 
-You are free to fork, modify, and share this project for personal and educational use. Commercial use of this software, or any applications derived from it, is strictly prohibited. See the [LICENSE](LICENSE) file for details.
+In plain terms: you're free to use, run, self-host, modify, and share exotick — including **inside a company or for your own commercial work** — at no cost. What you may **not** do is **sell** it: you can't charge third parties for the software itself, or for a product or service whose primary value comes from exotick (e.g. reselling it or offering it as a paid hosted service). See the [LICENSE](LICENSE) file for the exact terms.
 
 ---
 

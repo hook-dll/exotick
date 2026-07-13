@@ -2,7 +2,7 @@
   "name": "exotick-client",
   "version": "1.0.0",
   "private": true,
-  "license": "CC-BY-NC-SA-4.0",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {
     "dev": "vite",
