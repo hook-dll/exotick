@@ -110,7 +110,30 @@ router.post('/bulk-delete', (req, res) => {
   const del = db.prepare('DELETE FROM sections WHERE id = ?');
   let deleted = 0;
   transaction(() => {
+    // Same append-to-end concern as the single delete: gather every freed
+    // case (in section order, then case order) and renumber them after the
+    // existing unsectioned pile so they don't interleave into the middle.
+    const first = db.prepare('SELECT library_id FROM sections WHERE id = ?').get((ids as number[])[0]) as any;
+    const libraryId = first?.library_id as number | undefined;
+    const freed: number[] = [];
+    let maxOrder = -1;
+    if (libraryId != null) {
+      const placeholders = (ids as number[]).map(() => '?').join(',');
+      const secRows = db.prepare(
+        `SELECT id FROM sections WHERE id IN (${placeholders}) ORDER BY order_index, id`
+      ).all(...(ids as number[])) as any[];
+      const caseStmt = db.prepare('SELECT id FROM test_cases WHERE section_id = ? ORDER BY order_index, id');
+      for (const s of secRows) for (const c of caseStmt.all(s.id) as any[]) freed.push(c.id);
+      // Read the max BEFORE deleting, while freed cases still have section_id set.
+      maxOrder = ((db.prepare(
+        'SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND section_id IS NULL'
+      ).get(libraryId)) as any)?.max ?? -1;
+    }
     for (const id of ids as number[]) deleted += Number(del.run(id).changes);
+    if (freed.length > 0) {
+      const upd = db.prepare('UPDATE test_cases SET order_index = ? WHERE id = ?');
+      for (const id of freed) upd.run(++maxOrder, id);
+    }
   });
   writeEvent({ eventType: 'edit', actor: req.user!.username, library });
   res.json({ ok: true, deleted });
@@ -177,10 +200,30 @@ router.put('/:id', (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
+  const sectionId = Number(req.params.id);
   // Snapshot the library BEFORE deleting the section.
   const library = libraryForSection(req.params.id);
-  const result = db.prepare('DELETE FROM sections WHERE id = ?').run(req.params.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Not found' });
+  const section = db.prepare('SELECT library_id FROM sections WHERE id = ?').get(sectionId) as any;
+  if (!section) return res.status(404).json({ error: 'Not found' });
+
+  // The section's cases fall back to unsectioned via ON DELETE SET NULL, but
+  // they keep their old order_index (0..n within the section). Since the
+  // unsectioned list is sorted by order_index, those values would interleave
+  // the freed cases into the MIDDLE of the existing unsectioned pile. Renumber
+  // them so they land at the END, in their original order. maxOrder is read
+  // BEFORE the delete, while the freed cases still have section_id set (so
+  // they're excluded from the section_id IS NULL max).
+  transaction(() => {
+    const cases = db.prepare(
+      'SELECT id FROM test_cases WHERE section_id = ? ORDER BY order_index, id'
+    ).all(sectionId) as any[];
+    let maxOrder = ((db.prepare(
+      'SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND section_id IS NULL'
+    ).get(section.library_id)) as any)?.max ?? -1;
+    db.prepare('DELETE FROM sections WHERE id = ?').run(sectionId);
+    const upd = db.prepare('UPDATE test_cases SET order_index = ? WHERE id = ?');
+    for (const c of cases) upd.run(++maxOrder, c.id);
+  });
   writeEvent({ eventType: 'edit', actor: req.user!.username, library });
   res.status(204).send();
 });

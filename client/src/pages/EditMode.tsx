@@ -504,7 +504,7 @@ export default function EditMode() {
                 title="Click to view its description on the right"
                 className={`flex-1 min-w-0 text-left text-sm flex items-start gap-1.5 ${selectedId === tc.id ? 'text-blue-600 font-medium' : 'text-gray-700'}`}
               >
-                <span>{tc.description}</span>
+                <span className="min-w-0 break-words">{tc.description}</span>
                 {tc.notes && <span className="shrink-0 text-gray-300 mt-0.5" title="Has a description">📄</span>}
               </button>
               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -744,7 +744,7 @@ export default function EditMode() {
                 onChange={(e) => { const v = e.target.value; if (v !== '') bulkMoveCases(v === 'null' ? null : Number(v)); }}
                 className="border rounded px-2 py-1 text-sm text-gray-600 max-w-[11rem] truncate focus:outline-none focus:ring-1 focus:ring-blue-400"
               >
-                <option value="">Move to…</option>
+                <option value="" disabled hidden>Move to…</option>
                 <option value="null">Unsectioned</option>
                 {sectionTargetOptions}
               </select>
@@ -761,7 +761,7 @@ export default function EditMode() {
                 onChange={(e) => { const v = e.target.value; if (v !== '') mergeSections(Number(v)); }}
                 className="border rounded px-2 py-1 text-sm text-gray-600 max-w-[11rem] truncate focus:outline-none focus:ring-1 focus:ring-blue-400"
               >
-                <option value="">Merge into…</option>
+                <option value="" disabled hidden>Merge into…</option>
                 {sectionTargetOptions}
               </select>
               <button onClick={bulkDeleteSections} className="px-2 py-1 rounded text-red-600 hover:bg-red-50 border border-red-200 text-xs"><Action icon="trash">Delete</Action></button>
@@ -784,7 +784,7 @@ export default function EditMode() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-2xl mb-1">⚠️</div>
-            <h2 className="text-lg font-bold text-gray-800 mb-2">Delete library "{activeLibrary.name}"?</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-2 break-words">Delete library "{activeLibrary.name}"?</h2>
             <p className="text-sm text-gray-700 mb-3">
               Be careful, you're about to delete an entire library! All sections and cases will disappear!
               Are you <span className="font-bold">REALLY</span> sure?
@@ -1063,7 +1063,7 @@ export default function EditMode() {
           {selected ? (
             <div>
               <div className="px-4 py-3 border-b bg-gray-50">
-                <p className="text-sm font-medium text-gray-800">{selected.tc.description}</p>
+                <p className="text-sm font-medium text-gray-800 break-words">{selected.tc.description}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{selected.sectionName}</p>
               </div>
               <div className="px-4 py-4">

@@ -45,6 +45,40 @@ const SAMPLES: SampleSection[] = [
       { description: 'Non-admin visiting /admin gets a 403, not a redirect loop' },
     ],
   },
+  {
+    name: 'Search & Filters',
+    color: 'orange',
+    cases: [
+      { description: 'Keyword search returns relevant results', notes: 'Search for a known product name.\n\n**Expected:** the top result is an exact match.' },
+      { description: 'Empty search shows a friendly prompt, not an error' },
+      { description: 'Combining filters (category + price) narrows results' },
+      { description: 'Clearing all filters restores the full list' },
+      { description: 'Search handles special characters without crashing', notes: 'Try inputs like `%`, `"`, `<script>`, and a very long string.' },
+    ],
+  },
+  {
+    name: 'Notifications',
+    color: 'yellow',
+    cases: [
+      { description: 'In-app bell shows the correct unread count' },
+      { description: 'Marking one notification as read decrements the count' },
+      { description: 'Email notification respects the user\'s opt-out setting' },
+      { description: 'Push notification deep-links to the right screen' },
+    ],
+  },
+];
+
+// Unsectioned demo cases — cross-cutting checks that don't belong to a single
+// feature area. Shown to demonstrate the "Unsectioned" pile and its ordering.
+const SAMPLE_UNSECTIONED: SampleCase[] = [
+  { description: 'Mobile layout renders without horizontal scroll' },
+  { description: 'Dark mode preference persists across reloads' },
+  { description: '404 page offers a link back home' },
+  { description: 'Session times out after 30 days of inactivity' },
+  { description: 'Large file upload shows a progress bar', notes: 'Upload a ~50 MB file on a throttled connection.\n\n**Watch:** progress advances and a cancel button is available.' },
+  { description: 'Keyboard-only user can complete checkout end to end' },
+  { description: 'Copy-to-clipboard button confirms with a toast' },
+  { description: 'Slow network shows skeleton loaders, not a blank screen' },
 ];
 
 // POST /api/samples/load — always creates a NEW library called "Samples"
@@ -81,6 +115,12 @@ router.post('/load', (_req, res) => {
         insertCase.run(sectionId, c.description, c.notes ?? null, cIdx, libraryId);
         casesAdded++;
       });
+    });
+
+    // Unsectioned cases live with section_id = NULL.
+    SAMPLE_UNSECTIONED.forEach((c, cIdx) => {
+      insertCase.run(null, c.description, c.notes ?? null, cIdx, libraryId);
+      casesAdded++;
     });
   });
 

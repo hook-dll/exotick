@@ -26,7 +26,7 @@ const components = {
 
 export default function MarkdownView({ content }: { content: string }) {
   return (
-    <div className="text-sm text-gray-700 leading-relaxed">
+    <div className="text-sm text-gray-700 leading-relaxed break-words">
       <Markdown remarkPlugins={[remarkGfm]} components={components}>
         {content}
       </Markdown>
