@@ -45,14 +45,15 @@ For Docker or headless boot, `EXOTICK_ADMIN_USERNAME` + `EXOTICK_ADMIN_PASSWORD`
 
 ---
 
-## Features at a glance
+## Features 
 
-- **Libraries** — sections and cases grouped into named libraries; runs are scoped to one library.
+- **Libraries** — test cases and sections grouped into named libraries; test runs are scoped to one library.
 - **Editing** — markdown notes, inline images, and bulk create / move / duplicate / delete / merge.
-- **Run lifecycle** — compose → mark pass/fail live → take over → finish, with contributors tracked per mark.
+- **Test run lifecycle** — compose → mark pass/fail live → take over → finish, with contributors tracked per mark.
 - **History & PDF export** — every completed run, filterable, exportable (with non-Latin scripts supported).
 - **Roles** — `admin / editor / runner / watcher` with distinct edit, run, and manage capabilities.
-- **Backup & branding** — per-library `.zip` import/export and a custom app name + logo.
+- **Backups** — per-library `.zip` import/export
+- **Branding** — customize app name + logo.
 - **Secure by default** — scrypt hashing, hashed session cookies, and progressive login rate-limiting.
 
 See the full [feature reference](docs/features.md) for the details behind each.
@@ -77,4 +78,4 @@ exotick is **source-available** (not open source): the **MIT License with the [C
 
 ## About me
 
-I've been working in testing for over 10 years now. Not a fan of the current commercial solutions on the test management system market. Claude Code helped me build the system I wanted for myself, slightly exotic one. I want to share it with you in case it works for you too.
+I've been working in testing for over 10 years now. Not a fan of the current commercial solutions on the test management system market. Claude Code helped me build the system I wanted for myself, slightly exotic one. I want to share it with you in case it clicks for you too.

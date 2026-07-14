@@ -4,24 +4,17 @@ A full reference for what exotick does. For a one-paragraph overview see the
 [README](../readme.md); for the auth/session details see
 [Security](security.md).
 
-Most of exotick is organized around a single idea: **cases live in libraries,
-and a run is a snapshot of some cases from one library.** The sections below
-follow that flow — build a library, compose a run, execute it, then review and
-export the history.
-
 ---
 
 ## Libraries
 
-Sections and cases live inside named **libraries**. A fresh install ships with
-one library called `Main`; create more from Edit Mode.
+Sections and cases live inside named **libraries**. These are your repositories - use a single one forever or add more to your liking and needs - convenient if you're testing multiple unrelated products.
 
 - A run is always scoped to a **single** library — composing cases across
   libraries is not allowed.
-- Sample data loads into its own `Samples` library and is never mixed with your
+- Demo sample data loads into its own `Samples` library and is never mixed with your
   real data.
-- Deleting a library is refused if any run still references it, or if it's the
-  last remaining library.
+- Deleting a library is refused if any test run still references it, you must delete these test runs first.
 
 ## Editing
 
@@ -34,7 +27,7 @@ one library called `Main`; create more from Edit Mode.
 
 ---
 
-## The run lifecycle
+## Test run lifecycle
 
 A run moves through these stages in order.
 
@@ -52,21 +45,20 @@ Mark each case **Pass** or **Fail**; every click saves immediately. Only the
 read-only — editors and runners additionally get a **Take over** button (see
 below).
 
-### 3. Take over
+### 3. Take over (optional)
 
-Take over is only available for **active** runs — a draft can't be taken over,
-because that would be a pure steal from whoever is still composing it.
+Take over lets another user to continue an **active**, previously started and abandoned run, this covers the so-called bus-factor when initial user is unable to continue his job.
 
 - The person taking over must type a **reason of at least 10 characters**.
 - Take over is blocked during a **cooldown window** measured from the current
   runner's last mark. The cooldown is admin-configurable at **Settings › Take
-  over cooldown** (default 60 minutes; setting it to `0` disables the *timing*
+  over cooldown** (default 60 minutes, up to 10080 minutes, which is 7 days); setting it to `0` disables the *timing*
   check but not the required reason).
 - The server never leaks how much cooldown time remains to callers.
 
 ### 4. Finish
 
-Finishing a run **auto-skips** any remaining unmarked items and moves the run to
+Finishing a run prompts to skip any remaining unmarked items, auto-skips it if confirmed and moves the run to
 completed.
 
 ### 5. History & contributors
@@ -75,7 +67,7 @@ completed.
 - A run's **Detail** view shows a summary, results grouped by section, and a
   **Contributors** panel.
 - **Contributors** are derived from the actor recorded on every mark or skip,
-  sorted by count. The same panel appears in the PDF export.
+  sorted by count. There's currently no track which cases exactly were contributed by each user. The same panel appears in the PDF export.
 
 ### 6. PDF export
 
@@ -92,6 +84,9 @@ Roles are ordered `admin > editor > runner > watcher`, but the ordering is about
 *management* capability, not *running* — note that **admin doesn't run tests**.
 Composing, starting, marking, finishing, and taking over are reserved for
 editors and runners.
+
+**Intended use:** whoever installs exotic is an admin, has full control over system.
+Create editors (who you trust to modify test cases along with working on test runs), runners (who you trust to work on test runs), watchers (developers or management who can only view current work)
 
 | Capability | admin | editor | runner | watcher |
 |---|---|---|---|---|
@@ -167,6 +162,6 @@ exactly what was added to or removed from a library, to keep the app simple.
 
 ---
 
-## Easter egg
+## Eggs
 
-Switch between light and dark mode a few times to defeat boredom.
+Some buttons on left menu do not mind being clicked a few consecutive times to defeat boredom.
