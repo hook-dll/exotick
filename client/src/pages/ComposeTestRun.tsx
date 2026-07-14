@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import MarkdownView from '../components/MarkdownView';
 import LibraryPicker from '../library/LibraryPicker';
+import Action from '../iconmode/Action';
 import { useAuth } from '../auth/AuthContext';
 import { useLibrary } from '../library/LibraryContext';
 import type { Section, TestCase } from '../types';
@@ -235,14 +236,14 @@ export default function ComposeTestRun() {
               disabled={submitting || totalSelected === 0}
               className="py-1.5 px-4 border border-blue-600 text-blue-600 text-sm font-medium rounded hover:bg-blue-50 disabled:opacity-50"
             >
-              Save as Draft
+              <Action icon="draft">Save as Draft</Action>
             </button>
             <button
               onClick={() => handleSubmit(true)}
               disabled={submitting || totalSelected === 0}
               className="py-1.5 px-4 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              Save &amp; Start
+              <Action icon="rocket" label="Save & Start">Save &amp; Start</Action>
             </button>
           </div>
         </div>

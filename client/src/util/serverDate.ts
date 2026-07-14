@@ -18,3 +18,14 @@ export function parseServerTs(s: string | null | undefined): number {
   const t = new Date(normalized).getTime();
   return Number.isFinite(t) ? t : NaN;
 }
+
+/**
+ * Format a server timestamp for display in the VIEWER's local timezone.
+ * Parses via parseServerTs (so the UTC instant is read correctly) and returns
+ * `toLocaleString()`; empty string for missing/invalid input so callers can
+ * fall back with `|| '—'`.
+ */
+export function formatServerTs(s: string | null | undefined): string {
+  const t = parseServerTs(s);
+  return Number.isFinite(t) ? new Date(t).toLocaleString() : '';
+}

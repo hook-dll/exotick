@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { api, logCsvUrl } from '../api';
+import Action from '../iconmode/Action';
+import { formatServerTs } from '../util/serverDate';
 import { useAuth } from '../auth/AuthContext';
 import { useLibrary } from '../library/LibraryContext';
 import type { LogEvent } from '../types';
@@ -56,7 +58,7 @@ export default function Log() {
           className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
           title="Download the full history as CSV"
         >
-          Download CSV
+          <Action icon="download">Download CSV</Action>
         </a>
       </div>
 
@@ -98,7 +100,7 @@ export default function Log() {
                 return (
                   <tr key={e.id} className="align-top">
                     <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">
-                      {new Date(e.created_at).toLocaleString()}
+                      {formatServerTs(e.created_at)}
                     </td>
                     <td className="px-3 py-2 text-xs">
                       <span className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-700">{e.event_type}</span>

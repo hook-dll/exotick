@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { api } from '../api';
+import Action from '../iconmode/Action';
 
 interface Props {
   runId: number;
@@ -86,7 +87,7 @@ export default function TakeOverDialog({ runId, runName, currentRunner, onClose,
             disabled={!canSubmit || busy}
             className="flex-1 px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50"
           >
-            {busy ? 'Taking over…' : 'Take over'}
+            <Action icon="swap" label="Take over">{busy ? 'Taking over…' : 'Take over'}</Action>
           </button>
           <button
             type="button"
@@ -94,7 +95,7 @@ export default function TakeOverDialog({ runId, runName, currentRunner, onClose,
             disabled={busy}
             className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded disabled:opacity-50"
           >
-            Cancel
+            <Action icon="x">Cancel</Action>
           </button>
         </div>
       </form>

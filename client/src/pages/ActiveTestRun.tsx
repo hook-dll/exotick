@@ -4,6 +4,7 @@ import confetti from 'canvas-confetti';
 import { api } from '../api';
 import MarkdownView from '../components/MarkdownView';
 import TakeOverDialog from '../components/TakeOverDialog';
+import Action from '../iconmode/Action';
 import { useAuth } from '../auth/AuthContext';
 import type { SectionColor, TestRunItem, TestRunWithItems } from '../types';
 
@@ -71,13 +72,15 @@ export default function ActiveTestRun() {
   // Fetch live section colors for THIS run's library so the section
   // headers here match the tints picked in Edit Mode. Runs on runs from
   // other libraries stay tint-less (section-name matches nothing) — that's
-  // fine, snapshot text still renders.
+  // fine, snapshot text still renders. Watchers can't read library content
+  // (server 403s), so skip it — untinted headers are purely cosmetic.
   useEffect(() => {
     if (!run) return;
+    if (user?.role === 'watcher') return;
     api.sections.list(run.library_id).then(({ sections }) => {
       setColorByName(new Map(sections.map((s) => [s.name, s.color])));
     }).catch(() => { /* fall back to no colors */ });
-  }, [run?.library_id]);
+  }, [run?.library_id, user?.role]);
 
   const handleItemClick = async (item: TestRunItem, clicked: 'pass' | 'fail') => {
     const newStatus = item.status === clicked ? null : clicked;
@@ -175,7 +178,7 @@ export default function ActiveTestRun() {
                 : 'Take over this run'}
               className="shrink-0 px-3 py-1.5 text-sm bg-amber-600 text-white font-medium rounded hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Take over
+              <Action icon="swap">Take over</Action>
             </button>
           )}
         </div>
@@ -210,7 +213,7 @@ export default function ActiveTestRun() {
             disabled={finishing}
             className="px-4 py-2 bg-gray-800 text-white text-sm font-medium rounded hover:bg-gray-900 disabled:opacity-50 shrink-0 ml-4"
           >
-            {finishing ? 'Finishing...' : 'Finish Run'}
+            <Action icon="flag" label="Finish Run">{finishing ? 'Finishing...' : 'Finish Run'}</Action>
           </button>
         )}
       </div>
@@ -275,7 +278,7 @@ export default function ActiveTestRun() {
                               : 'border-green-500 text-green-600 hover:bg-green-50'
                           }`}
                         >
-                          Pass
+                          <Action icon="check">Pass</Action>
                         </button>
                         <button
                           onClick={() => handleItemClick(item, 'fail')}
@@ -285,7 +288,7 @@ export default function ActiveTestRun() {
                               : 'border-red-400 text-red-500 hover:bg-red-50'
                           }`}
                         >
-                          Fail
+                          <Action icon="x">Fail</Action>
                         </button>
                       </div>
                     ) : (
@@ -312,7 +315,7 @@ export default function ActiveTestRun() {
             disabled={finishing}
             className="w-full py-2.5 bg-gray-800 text-white text-sm font-medium rounded hover:bg-gray-900 disabled:opacity-50"
           >
-            {finishing ? 'Finishing...' : 'Finish Run'}
+            <Action icon="flag" label="Finish Run">{finishing ? 'Finishing...' : 'Finish Run'}</Action>
           </button>
         )}
       </div>

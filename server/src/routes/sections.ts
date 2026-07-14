@@ -6,10 +6,11 @@ import { writeEvent, libraryById, libraryForSection } from '../eventLog';
 const router = Router();
 
 // GET /?library_id=N — list sections + unsectioned cases within one library.
-// Any authenticated user can read; caller MUST specify a library to keep
-// the response scoped and prevent accidental cross-library mixing on the
-// client.
-router.get('/', (req, res) => {
+// Gated to runner+ (admin, editor, runner): this is library CONTENT, and a
+// runner needs it to pick cases when composing. Watchers are excluded — they
+// see runs and history only. Caller MUST specify a library to keep the
+// response scoped and prevent accidental cross-library mixing on the client.
+router.get('/', requireRole('runner'), (req, res) => {
   const libraryId = Number(req.query.library_id);
   if (!Number.isInteger(libraryId) || libraryId <= 0) {
     return res.status(400).json({ error: 'library_id query param is required' });

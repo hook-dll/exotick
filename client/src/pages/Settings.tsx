@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useBranding } from '../branding/BrandingContext';
+import Action from '../iconmode/Action';
+import { formatServerTs } from '../util/serverDate';
 import type { AdminUser, Role, SessionSummary } from '../types';
 
 // Roles the admin can assign. Admin itself is bootstrap-only — there is
@@ -81,7 +83,7 @@ function ChangePasswordSection() {
         {message && <div className="text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2 text-sm">{message}</div>}
         <button type="submit" disabled={busy || !current || !next || !confirm}
           className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50">
-          {busy ? 'Updating…' : 'Update password'}
+          <Action icon="key" label="Update password">{busy ? 'Updating…' : 'Update password'}</Action>
         </button>
       </form>
     </Card>
@@ -146,17 +148,17 @@ function ActiveSessionsSection() {
               </thead>
               <tbody className="divide-y">
                 {sessions.map((s) => (
-                  <tr key={s.id} className={s.isCurrent ? 'bg-blue-50/40' : ''}>
+                  <tr key={s.id} className={s.isCurrent ? 'bg-blue-50' : ''}>
                     <td className="px-3 py-2">
                       <div className="text-gray-800" title={s.user_agent ?? ''}>{shortUserAgent(s.user_agent)}</div>
                       {s.isCurrent && <div className="text-xs text-blue-600">This device</div>}
                     </td>
                     <td className="px-3 py-2 text-xs text-gray-500 font-mono">{s.ip ?? '—'}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{new Date(s.created_at).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{formatServerTs(s.created_at)}</td>
                     <td className="px-3 py-2 text-right">
                       <button onClick={() => revoke(s)} disabled={pending === s.id}
-                        className="px-2 py-1 text-xs border border-red-200 rounded text-red-600 hover:bg-red-50 disabled:opacity-30">
-                        {pending === s.id ? 'Revoking…' : s.isCurrent ? 'Sign out here' : 'Revoke'}
+                        className="px-2 py-1 text-xs font-medium border border-red-300 rounded text-red-600 hover:bg-red-50 disabled:opacity-30">
+                        <Action icon={s.isCurrent ? 'logout' : 'ban'} label={s.isCurrent ? 'Sign out here' : 'Revoke'}>{pending === s.id ? 'Revoking…' : s.isCurrent ? 'Sign out here' : 'Revoke'}</Action>
                       </button>
                     </td>
                   </tr>
@@ -269,7 +271,7 @@ function UsersSection({ users, reload }: UsersSectionProps) {
         </div>
         <button type="submit" disabled={creating || !newUsername.trim() || !newPassword}
           className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50">
-          {creating ? 'Adding…' : 'Add user'}
+          <Action icon="userPlus" label="Add user">{creating ? 'Adding…' : 'Add user'}</Action>
         </button>
       </form>
       {createError && <div className="text-red-600 text-sm mb-3">{createError}</div>}
@@ -308,21 +310,21 @@ function UsersSection({ users, reload }: UsersSectionProps) {
                     </select>
                   </td>
                   <td className="px-3 py-2 text-xs text-gray-500">
-                    {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : '—'}
+                    {u.last_login_at ? formatServerTs(u.last_login_at) : '—'}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="inline-flex gap-1">
                       <button onClick={() => setResetTarget(u)}
                         className="px-2 py-1 text-xs border rounded text-gray-600 hover:bg-gray-50">
-                        Reset password
+                        <Action icon="key">Reset password</Action>
                       </button>
                       <button onClick={() => toggleDisabled(u)}
                         className="px-2 py-1 text-xs border rounded text-gray-600 hover:bg-gray-50">
-                        {isDisabled ? 'Enable' : 'Disable'}
+                        <Action icon={isDisabled ? 'check' : 'ban'} label={isDisabled ? 'Enable' : 'Disable'}>{isDisabled ? 'Enable' : 'Disable'}</Action>
                       </button>
                       <button onClick={() => remove(u)}
                         className="px-2 py-1 text-xs border border-red-200 rounded text-red-600 hover:bg-red-50">
-                        Delete
+                        <Action icon="trash">Delete</Action>
                       </button>
                     </div>
                   </td>
@@ -356,10 +358,10 @@ function UsersSection({ users, reload }: UsersSectionProps) {
             <div className="flex gap-2 mt-3">
               <button type="submit" disabled={resetBusy || !resetPw || !resetConfirm}
                 className="flex-1 px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50">
-                {resetBusy ? 'Resetting…' : 'Reset password'}
+                <Action icon="key" label="Reset password">{resetBusy ? 'Resetting…' : 'Reset password'}</Action>
               </button>
               <button type="button" onClick={closeReset} disabled={resetBusy}
-                className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded disabled:opacity-50">Cancel</button>
+                className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded disabled:opacity-50"><Action icon="x">Cancel</Action></button>
             </div>
           </form>
         </div>
@@ -420,7 +422,7 @@ function TakeOverCooldownSection() {
           disabled={busy || !dirty || !validParsed}
           className="ml-2 px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50"
         >
-          {busy ? 'Saving…' : 'Save'}
+          <Action icon="save" label="Save">{busy ? 'Saving…' : 'Save'}</Action>
         </button>
         {value !== null && !dirty && (
           <span className="text-xs text-gray-400 ml-1">Current: {value} min</span>
@@ -459,13 +461,13 @@ function LogLinkSection() {
           to="/log"
           className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded"
         >
-          Browse log
+          <Action icon="list">Browse log</Action>
         </Link>
         <a
           href="/api/log/export.csv"
           className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
         >
-          Download CSV
+          <Action icon="download">Download CSV</Action>
         </a>
       </div>
     </Card>
@@ -548,12 +550,12 @@ function BrandingSection() {
             <div className="flex gap-1">
               <button type="button" onClick={() => fileRef.current?.click()} disabled={busy}
                 className="text-xs px-2 py-1 border rounded text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-                {logoUrl || pickedFile ? 'Replace' : 'Upload'}
+                <Action icon="upload" label="Upload logo">{logoUrl || pickedFile ? 'Replace' : 'Upload'}</Action>
               </button>
               {logoUrl && !pickedFile && (
                 <button type="button" onClick={removeLogo} disabled={busy}
                   className="text-xs px-2 py-1 border border-red-200 rounded text-red-600 hover:bg-red-50 disabled:opacity-50">
-                  Remove
+                  <Action icon="trash">Remove</Action>
                 </button>
               )}
             </div>
@@ -578,7 +580,7 @@ function BrandingSection() {
       <div className="mt-4">
         <button onClick={save} disabled={busy || (!pickedFile && draftName.trim() === (name === 'exotick' ? '' : name))}
           className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50">
-          {busy ? 'Saving…' : 'Save'}
+          <Action icon="save" label="Save">{busy ? 'Saving…' : 'Save'}</Action>
         </button>
       </div>
     </Card>

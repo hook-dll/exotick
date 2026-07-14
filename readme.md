@@ -1,6 +1,7 @@
 # exotick
 
-Simple yet powerful self-hosted test case management. 
+Simple yet powerful self-hosted test case management.
+
 - Multiple test case libraries, sections and cases with markdown notes and pasted images
 - Compose runs from any subset in a selected library
 - Mark pass/fail live. Don't mark to skip on finish
@@ -21,11 +22,7 @@ One process, one SQLite file. Runs on a laptop, a LAN box, or a VPS. For small t
 
 ![Compose and start a run](docs/screens/gif-2-compose.gif)
 
-**Bulk edit** — select a whole section, duplicate, and move cases in one go:
-
-![Bulk edit](docs/screens/gif-5-bulk.gif)
-
-You can find other showcase screenshots (editing a case, branding) in the [`docs/screens`](docs/screens) folder.
+More screenshots — bulk edit, editing a case, branding — are in [`docs/screens`](docs/screens).
 
 ---
 
@@ -42,151 +39,39 @@ npm run dev       # starts backend :3001 + client :5173
 
 Open http://localhost:5173.
 
-On first launch the terminal prompts for an admin username and password. Sign in via web, done. Change the admin password later at **Settings › Change my password**. Forgot it and locked out? Reset it from the host in one command — see [Password recovery](#password-recovery) below. Add teammates at **Settings › Users** (roles: editor / runner / watcher).
+On first launch the terminal prompts for an admin username and password. Sign in via web, done. Change the admin password later at **Settings › Change my password**. Locked out? See [password recovery](docs/administration.md#password-recovery). Add teammates at **Settings › Users**.
 
-For Docker or headless boot, `EXOTICK_ADMIN_USERNAME` + `EXOTICK_ADMIN_PASSWORD` env vars replace the prompt. Both are ignored once an admin exists.
-
----
-
-## Features
-
-**Libraries** — Sections and cases live inside named libraries. Fresh install ships with one called `Main`; create more from Edit Mode. Runs are scoped to a single library, composing across libraries is not allowed. Sample data loads into a fresh `Samples` library, never mixed with real data. Delete is refused if any run still references the library, or if it's the last one.
-
-**Editing** — Sections with optional colors, cases with markdown notes and inline images. Bulk create / move / duplicate / delete / merge. Reorder with arrow buttons.
-
-**Composing** — Pick a library, pick cases across sections, name the run, pick a runner from the roster dropdown (watchers hidden for all, admin hidden for non-admins). Save as draft or start immediately.
-
-**Running** — Pass/Fail per case, each click saves. Only the current runner can mark. Others viewing an active run see it read-only; editors + runners get a Take over button. Finish auto-skips remaining items.
-
-**Take over** — Only for **active** runs (drafts can't be taken over — that would be a pure steal from whoever's composing). Requires to type in a reason ≥ 10 characters. Blocked during the cooldown window since the runner's last mark. Cooldown is admin-configurable at **Settings › Take over cooldown** (default 60 min; 0 disables the timing check but not the reason). Server never leaks "N minutes left" to callers.
-
-**Roles** — `admin > editor > runner > watcher` for read / edit / manage capabilities, but **admin doesn't run tests**. Editors and runners are the only roles that can compose, start, mark, finish, or take over.
-
-| Capability | admin | editor | runner | watcher |
-|---|---|---|---|---|
-| Manage users / branding / backup / log | ✅ | ❌ | ❌ | ❌ |
-| Edit libraries / sections / cases | ✅ | ✅ | ❌ | ❌ |
-| Delete draft runs | ✅ | ✅ | ❌ | ❌ |
-| Delete active / completed runs | ✅ | ❌ | ❌ | ❌ |
-| Compose run / start / mark / finish / take over | ❌ | ✅ | ✅ | ❌ |
-| View active runs, history | ✅ | ✅ | ✅ | ✅ |
-
-There is exactly one admin per install. Bootstrap only; the UI never offers `admin` in role pickers.
-
-**Contributors** — Every mark or skip records the actor's username. History Detail and PDF export show a Contributors summary sorted by count.
-
-**History** — All completed runs, filterable by library. Detail view shows summary + results grouped by section + Contributors, with a PDF export link.
-
-**PDF export** — Full library, a bulk-selected subset, or a specific run's results. Cyrillic + non-Latin scripts render correctly (drop `DejaVuSans.ttf` + `DejaVuSans-Bold.ttf` into `server/fonts/` for cross-platform consistency).
-
-**Backup** (admin) — Per-library `.zip` (backup.json + referenced upload files). Import as a new library, or merge / replace into the current one. **Not** in the zip: run history, users, sessions, branding, other libraries, the event log.
-
-**Branding** (admin) — Custom app name (≤ 40 chars) and logo (PNG/JPG/WebP, 2 MB). SVG is intentionally rejected — it's a scriptable XML document and the logo is served publicly.
-
-**Log** (admin) — Records `login`, `edit`, `compose`, `start`, `finish`, `take_over`, `password_change`, `password_reset` superficially, just to register the event. For example it doesn't show what was particularly added or deleted from library, currently I think that will overcomplicate the app. Each row: when / event / actor / details (library, run, previous runner, reason — whichever apply). Library and run names in details are clickable. Rows survive their run / library being deleted (snapshot columns keep them readable). Browse the latest 200 at `/log` or download the full history as CSV. **Not** included in backups.
-
-**Sessions** — HttpOnly cookies, SameSite=Lax, 30-day sliding lifetime. DB stores `sha256(session_id)`, not the raw cookie. **Settings › Active sessions** lists your own logins with device (parsed from user-agent), IP, and signed-in time; revoke any of them.
-
-**Login rate-limit** — Progressive per IP: 5 failed attempts → 5 min lockout, next 5 → 50 min, next 5 → 500 min (stays there). Wrong username and wrong password count identically. Reset on successful login.
-
-**Change-password rate-limit** — Same ladder, per user. A stolen session that starts guessing gets stopped on the same schedule and locks the endpoint for the account across all sessions.
+For Docker or headless boot, `EXOTICK_ADMIN_USERNAME` + `EXOTICK_ADMIN_PASSWORD` env vars replace the prompt — see [Deployment](docs/deployment.md).
 
 ---
 
-## Deployment
+## Features at a glance
 
-**LAN dev** — `npm run dev` on the host. Others browse `http://<host-ip>:5173`. Open port 5173 in the host firewall if needed:
+- **Libraries** — sections and cases grouped into named libraries; runs are scoped to one library.
+- **Editing** — markdown notes, inline images, and bulk create / move / duplicate / delete / merge.
+- **Run lifecycle** — compose → mark pass/fail live → take over → finish, with contributors tracked per mark.
+- **History & PDF export** — every completed run, filterable, exportable (with non-Latin scripts supported).
+- **Roles** — `admin / editor / runner / watcher` with distinct edit, run, and manage capabilities.
+- **Backup & branding** — per-library `.zip` import/export and a custom app name + logo.
+- **Secure by default** — scrypt hashing, hashed session cookies, and progressive login rate-limiting.
 
-```powershell
-New-NetFirewallRule -DisplayName "exotick (Vite 5173)" -Direction Inbound `
-  -Action Allow -Protocol TCP -LocalPort 5173 -Profile Private
-```
-
-**Docker (VPS)** —
-```bash
-cp .env.example .env             # then set EXOTICK_ADMIN_PASSWORD in .env
-docker compose up -d --build     # compose refuses to start until it's set
-```
-`docker compose` reads `.env` automatically. `EXOTICK_ADMIN_USERNAME` defaults to `admin`; `EXOTICK_ADMIN_PASSWORD` has no default — compose fails fast with a clear error until you set it, so no publicly-known default password ever ships. Both are ignored once an admin exists. Container binds to `127.0.0.1:3001`. Data (`cms.db`, `uploads/`, `branding/`) persists in the `exotick-data` volume across rebuilds.
-
-**HTTPS** — TLS is your responsibility. Put a reverse proxy in front (Caddy, nginx, Traefik) and terminate TLS there. Real domain + Let's Encrypt is the low-friction path — `deploy/Caddyfile.example` is a starter. No domain? Register a free dynamic-DNS hostname ([DuckDNS](https://www.duckdns.org), [dynv6](https://dynv6.com)), point it at your public IP, forward ports **80** and **443** to your host, and drop this into your Caddyfile:
-
-```caddyfile
-yourname.duckdns.org {
-    reverse_proxy 127.0.0.1:3001
-}
-```
-
-Reload Caddy — it fetches a real Let's Encrypt cert within a minute. Anything else (self-signed, mkcert, Tailscale, Cloudflare Tunnel) is a choice for your deployment.
+See the full [feature reference](docs/features.md) for the details behind each.
 
 ---
 
-## Password recovery
+## Documentation
 
-There's no email/self-service reset by design. How you get back in depends on the role.
-
-### Editors, runners, watchers — ask the admin
-
-There's no self-reset for regular users. If you're locked out, contact your admin: they reset your password at **Settings › Users › Reset password** and hand you the new one (that also signs you out everywhere, so an old stolen session can't linger). Change it to something of your own from **Settings › Change my password** afterwards.
-
-### Admin — reset from the host
-
-The admin has no one above them, so recovery lives on the host — which is fine, because whoever runs exotick has shell / container access. One command resets the admin password and revokes that admin's sessions. No need to drop the database.
-
-**Local:**
-```bash
-npm run reset-admin
-```
-
-**Docker:**
-```bash
-docker compose exec exotick node server/dist/reset-admin-cli.js
-```
-
-Both prompt for the new password (hidden input, entered twice). For unattended use, set `EXOTICK_RESET_PASSWORD` before running. Simplest of all: store the admin password in a password manager and you'll never need this.
-
----
-
-## Environment variables
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `EXOTICK_ADMIN_USERNAME` | First-run admin username (2-64 chars — letters, digits, or any of `. _ - @ +`; email addresses work). Only consulted when no admin exists in the DB and stdin is NOT a TTY (Docker / CI). Ignored after any admin exists. | *(unset — interactive prompt in local dev)* |
-| `EXOTICK_ADMIN_PASSWORD` | First-run admin password (≥ 8 chars). Same rules. | *(unset — interactive prompt in local dev)* |
-| `EXOTICK_DATA_DIR` | Where SQLite + uploads + branding live. | `./data` (dev) / `/data` (Docker) |
-| `PORT` | HTTP listen port. | `3001` |
-| `NODE_ENV=production` | Serves the built SPA from Express at `/*`. | *(unset)* |
-
----
-
-## Data layout
-
-```
-data/
-  cms.db            SQLite database
-  cms.db-shm        SQLite WAL sidecars (transient)
-  cms.db-wal
-  uploads/          images referenced by test-case notes; served at
-                    /uploads/* (auth-gated)
-  branding/         admin-uploaded logo (single file); served publicly
-                    at /branding/* so the login page can load it
-```
-
-Wipe everything: delete `data/cms.db*`. Uploaded images and branding survive unless you also delete `data/uploads/` and `data/branding/`.
-
----
-
-## Easter-egg
-
-Switch light/dark modes a few times to defeat boredom.
+- [Features](docs/features.md) — every feature, the run lifecycle, and the roles matrix
+- [Deployment](docs/deployment.md) — LAN, Docker, and HTTPS / reverse proxy
+- [Configuration](docs/configuration.md) — environment variables and data layout
+- [Administration](docs/administration.md) — managing users and password recovery
+- [Security](docs/security.md) — hashing, sessions, rate limits, and the auth model
 
 ---
 
 ## License
 
-This project is **source-available** (not open source). It's licensed under the **MIT License with the [Commons Clause](https://commonsclause.com/) condition**.
-
-In plain terms: you're free to use, run, self-host, modify, and share exotick — including **inside a company or for your own commercial work** — at no cost. What you may **not** do is **sell** it: you can't charge third parties for the software itself, or for a product or service whose primary value comes from exotick (e.g. reselling it or offering it as a paid hosted service). See the [LICENSE](LICENSE) file for the exact terms.
+exotick is **source-available** (not open source): the **MIT License with the [Commons Clause](https://commonsclause.com/) condition**. You're free to use, run, self-host, modify, and share it — including inside a company or for your own commercial work — at no cost. You may **not sell** it (resell the software, or offer it as a paid hosted service). See [LICENSE](LICENSE) for the exact terms.
 
 ---
 

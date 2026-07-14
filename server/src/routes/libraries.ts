@@ -5,10 +5,13 @@ import { writeEvent, libraryById } from '../eventLog';
 
 const router = Router();
 
-// Any authenticated user can list libraries — needed by every read screen
-// (Dashboard, History, ActiveTestRun, etc.) that shows a library name
-// alongside a run. Mutations below are editor+.
-router.get('/', (_req, res) => {
+// Listing libraries is library CONTENT, so it's gated to runner+ (admin,
+// editor, runner): a runner needs the catalog to pick a library when
+// composing. Watchers are excluded — they only ever see current runs and
+// history, never the library list. (Run rows still carry their own
+// library_name via a server-side join, so watcher read screens are unaffected.)
+// Mutations below are editor+.
+router.get('/', requireRole('runner'), (_req, res) => {
   const rows = db.prepare(
     'SELECT id, name, order_index, created_at FROM libraries ORDER BY order_index, id'
   ).all();

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import MarkdownView from '../components/MarkdownView';
+import Action from '../iconmode/Action';
+import { formatServerTs } from '../util/serverDate';
 import { useAuth } from '../auth/AuthContext';
 import type { SectionColor, TestRunItem, TestRunWithItems } from '../types';
 
@@ -44,13 +46,16 @@ export default function HistoryDetail() {
   }, [id]);
 
   // Fetch live section colors for THIS run's library so the section
-  // headers here match the tints picked in Edit Mode.
+  // headers here match the tints picked in Edit Mode. Watchers can't read
+  // library content (server 403s), so skip it — they just see untinted
+  // section headers, which is purely cosmetic.
   useEffect(() => {
     if (!run) return;
+    if (user?.role === 'watcher') return;
     api.sections.list(run.library_id).then(({ sections }) => {
       setColorByName(new Map(sections.map((s) => [s.name, s.color])));
     }).catch(() => { /* fall back to no colors */ });
-  }, [run?.library_id]);
+  }, [run?.library_id, user?.role]);
 
   const closeDelete = () => { setShowDelete(false); setDeleteError(''); };
 
@@ -107,14 +112,14 @@ export default function HistoryDetail() {
                 disabled={deleting}
                 className="flex-1 px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded disabled:opacity-50"
               >
-                {deleting ? 'Deleting…' : 'Delete Run'}
+                <Action icon="trash" label="Delete Run">{deleting ? 'Deleting…' : 'Delete Run'}</Action>
               </button>
               <button
                 onClick={closeDelete}
                 disabled={deleting}
                 className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded disabled:opacity-50"
               >
-                Cancel
+                <Action icon="x">Cancel</Action>
               </button>
             </div>
           </div>
@@ -157,12 +162,12 @@ export default function HistoryDetail() {
           )}
           {run.started_at && (
             <p className="text-xs text-gray-400 mt-0.5">
-              Started: {new Date(run.started_at).toLocaleString()}
+              Started: {formatServerTs(run.started_at)}
             </p>
           )}
           {run.finished_at && (
             <p className="text-xs text-gray-400">
-              Finished: {new Date(run.finished_at).toLocaleString()}
+              Finished: {formatServerTs(run.finished_at)}
             </p>
           )}
         </div>
@@ -172,7 +177,7 @@ export default function HistoryDetail() {
             target="_blank"
             className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
           >
-            Export PDF
+            <Action icon="download">Export PDF</Action>
           </a>
           {canDeleteRun && (
             <button
@@ -180,7 +185,7 @@ export default function HistoryDetail() {
               className="px-3 py-1.5 text-sm bg-red-50 hover:bg-red-100 border border-red-200 rounded text-red-600"
               title="Delete this test run"
             >
-              Delete Run
+              <Action icon="trash">Delete Run</Action>
             </button>
           )}
         </div>

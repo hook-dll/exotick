@@ -2,12 +2,25 @@ import { Router } from 'express';
 import PDFDocument from 'pdfkit';
 import db from '../db';
 import { setupFonts, FONT } from '../pdfFonts';
+import { requireRole } from '../auth/middleware';
 
 const router = Router();
 
+// SQLite's CURRENT_TIMESTAMP emits UTC as "YYYY-MM-DD HH:MM:SS" with no zone
+// marker, which Node parses as LOCAL time (silently offsetting it). Mark it UTC
+// so the true instant is read, then render in the SERVER machine's timezone.
+function fmtServerTs(s: string): string {
+  const iso = /T/.test(s) ? s : s.replace(' ', 'T') + 'Z';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? s : d.toLocaleString();
+}
+
 // GET /test-cases?library_id=N — full library, or subset via ?ids=1,2,3.
-// library_id is required so PDFs always represent a single library.
-router.get('/test-cases', (req, res) => {
+// library_id is required so PDFs always represent a single library. Gated to
+// runner+ because this exports library CONTENT. Watchers can still export a
+// run's RESULTS (see the /test-runs/:id route below) — that's history, not
+// the library catalog.
+router.get('/test-cases', requireRole('runner'), (req, res) => {
   const libraryId = Number(req.query.library_id);
   if (!Number.isInteger(libraryId) || libraryId <= 0) {
     return res.status(400).json({ error: 'library_id query param is required' });
@@ -100,8 +113,8 @@ router.get('/test-runs/:id', (req, res) => {
   if (run.library_name) doc.text(`Library: ${run.library_name}`, { align: 'center' });
   if (run.runner_name) doc.text(`Runner: ${run.runner_name}`, { align: 'center' });
   doc.text(`Status: ${run.status.toUpperCase()}`, { align: 'center' });
-  if (run.started_at) doc.text(`Started:  ${new Date(run.started_at).toLocaleString()}`, { align: 'center' });
-  if (run.finished_at) doc.text(`Finished: ${new Date(run.finished_at).toLocaleString()}`, { align: 'center' });
+  if (run.started_at) doc.text(`Started:  ${fmtServerTs(run.started_at)}`, { align: 'center' });
+  if (run.finished_at) doc.text(`Finished: ${fmtServerTs(run.finished_at)}`, { align: 'center' });
   doc.fillColor('black');
   doc.moveDown(1.2);
 

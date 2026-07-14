@@ -40,9 +40,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Fetch only when signed in. Clears on sign-out.
+  // Fetch only when signed in. Watchers are skipped — the server blocks them
+  // from reading the library catalog (they see runs + history only), so firing
+  // the request would just 403. Clears on sign-out.
   useEffect(() => {
-    if (!user) {
+    if (!user || user.role === 'watcher') {
       setLibraries([]);
       setActiveLibraryIdState(null);
       setIsLoading(false);

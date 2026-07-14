@@ -184,6 +184,63 @@ button.bg-white.rounded-lg:hover {
 .dark .section-tint-blue   { background-color: rgba(59, 130, 246, 0.18); }
 .dark .section-tint-purple { background-color: rgba(168, 85, 247, 0.18); }
 
+/* ── Library selector ─────────────────────────────────────────
+   The "building" level of the case → section → library hierarchy, so it's
+   deliberately prominent and FIXED-width: a long library name truncates with
+   an ellipsis instead of stretching the toolbar (the old auto-sizing select
+   jumped wide yet still clipped the name). Accent border + bold text draw the
+   eye to it. Shared by the Compose/Edit picker and the History filter so all
+   library selects look and size identically. Border uses accent tokens, so it
+   adapts to light/dark automatically. */
+.lib-select {
+  width: 15rem;
+  max-width: 15rem;
+  font-weight: 600;
+  border-width: 1.5px;
+  border-color: var(--tc-accent-border);
+  text-overflow: ellipsis;
+}
+.lib-select:hover,
+.lib-select:focus {
+  border-color: var(--tc-accent-ring);
+}
+/* Leading building glyph, tucked inside the field on the left. The wrapper
+   is inline so the fixed-width select keeps its size; the icon overlays and
+   ignores pointer events so clicks still open the menu. */
+.lib-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.lib-select-wrap .lib-select {
+  padding-left: 2rem;
+}
+.lib-select-icon {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1rem;
+  height: 1rem;
+  color: var(--tc-accent);
+  pointer-events: none;
+}
+
+/* ── Icon-mode easter egg ─────────────────────────────────────
+   When active, button labels are replaced by these inline glyphs (see
+   iconmode/). Sized to the font so a glyph sits exactly where its word did,
+   inheriting the button's text color via currentColor. */
+.action-glyph-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+.action-glyph {
+  width: 1.15em;
+  height: 1.15em;
+  display: inline-block;
+  vertical-align: -0.18em;
+}
+
 /* Palette swatch dots used in the section color picker — solid samples
    that show the same hue in every theme so users can pick reliably. */
 .swatch-red    { background-color: #f87171; }

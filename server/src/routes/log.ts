@@ -32,6 +32,16 @@ router.get('/', (_req, res) => {
   res.json({ events: rows, total, limit: BROWSE_LIMIT });
 });
 
+// SQLite's CURRENT_TIMESTAMP is UTC with no zone marker; Node would parse it
+// as local and silently offset it. Mark it UTC to read the true instant, then
+// render in the SERVER machine's timezone in a sortable "YYYY-MM-DD HH:MM:SS"
+// shape (the sv-SE locale yields exactly that ISO-like form).
+function toServerLocal(s: string): string {
+  const iso = /T/.test(s) ? s : s.replace(' ', 'T') + 'Z';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? s : d.toLocaleString('sv-SE');
+}
+
 // Minimal CSV encoder — no external dep. Wraps a field in quotes if it
 // contains a comma, quote, or newline; escapes embedded quotes by doubling.
 function csvField(v: unknown): string {
@@ -78,7 +88,7 @@ router.get('/export.csv', (_req, res) => {
     res.write(
       [
         row.id,
-        row.created_at,
+        toServerLocal(row.created_at),
         row.event_type,
         row.actor_username,
         row.test_run_id ?? '',

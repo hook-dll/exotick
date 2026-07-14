@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, KeyboardEvent } from 'react';
 import { api, backupExportUrl, testCasesPdfUrl } from '../api';
 import MarkdownView from '../components/MarkdownView';
 import LibraryPicker from '../library/LibraryPicker';
+import Action from '../iconmode/Action';
 import { useAuth } from '../auth/AuthContext';
 import { useLibrary } from '../library/LibraryContext';
 import type { Section, SectionColor, TestCase } from '../types';
@@ -467,7 +468,7 @@ export default function EditMode() {
                   onClick={() => imageInputRef.current?.click()}
                   className="ml-auto text-xs px-2 py-0.5 border rounded text-gray-500 hover:bg-gray-50 disabled:opacity-50"
                 >
-                  {uploadingImage ? 'Uploading…' : '+ Insert Image'}
+                  <Action icon="image" label="Insert image">{uploadingImage ? 'Uploading…' : '+ Insert Image'}</Action>
                 </button>
                 <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
               </div>
@@ -491,8 +492,8 @@ export default function EditMode() {
                 </select>
               </div>
               <div className="flex gap-2">
-                <button onClick={saveCase} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded border border-green-200">Save</button>
-                <button onClick={() => setEditCase(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded">Cancel</button>
+                <button onClick={saveCase} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded border border-green-200"><Action icon="save">Save</Action></button>
+                <button onClick={() => setEditCase(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded"><Action icon="x">Cancel</Action></button>
               </div>
             </div>
           ) : (
@@ -522,11 +523,11 @@ export default function EditMode() {
                 <button
                   onClick={() => setEditCase({ id: tc.id, desc: tc.description, notes: tc.notes ?? '', sectionId })}
                   className="px-2 py-1 text-blue-500 hover:text-blue-700 text-xs"
-                >Edit</button>
+                ><Action icon="pencil">Edit</Action></button>
                 <button
                   onClick={() => deleteCase(tc.id)}
                   className="px-2 py-1 text-red-400 hover:text-red-600 text-xs"
-                >Delete</button>
+                ><Action icon="trash">Delete</Action></button>
               </div>
             </div>
           )}
@@ -545,8 +546,8 @@ export default function EditMode() {
               onKeyDown={(e) => onKey(e, createCase, () => setAddCase(null))}
               autoFocus
             />
-            <button onClick={createCase} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded border border-green-300">Add</button>
-            <button onClick={() => setAddCase(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded">Cancel</button>
+            <button onClick={createCase} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded border border-green-300"><Action icon="plus">Add</Action></button>
+            <button onClick={() => setAddCase(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded"><Action icon="x">Cancel</Action></button>
           </div>
         ) : bulkAdd?.sectionId === sectionId ? (
           <div className="flex flex-col gap-1.5 flex-1">
@@ -561,25 +562,25 @@ export default function EditMode() {
             />
             <div className="flex gap-2">
               <button onClick={runBulkAdd} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded border border-green-300">
-                Add {bulkAdd.text.split('\n').map((l) => l.trim()).filter(Boolean).length || ''} cases
+                <Action icon="plus" label="Add cases">Add {bulkAdd.text.split('\n').map((l) => l.trim()).filter(Boolean).length || ''} cases</Action>
               </button>
-              <button onClick={() => setBulkAdd(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded">Cancel</button>
+              <button onClick={() => setBulkAdd(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded"><Action icon="x">Cancel</Action></button>
             </div>
           </div>
         ) : (
           <>
             <button onClick={() => { setBulkAdd(null); setAddCase({ sectionId, desc: '' }); }} className="text-xs text-blue-500 hover:text-blue-700">
-              + Add test case
+              <Action icon="plus" label="Add test case">+ Add test case</Action>
             </button>
             <button onClick={() => { setAddCase(null); setBulkAdd({ sectionId, text: '' }); }} className="text-xs text-blue-500 hover:text-blue-700">
-              + Add many
+              <Action icon="plusPlus" label="Add many">+ Add many</Action>
             </button>
             {sectionId !== null && (
               <button
                 onClick={() => { setAddCase(null); setBulkAdd(null); setNewSectionName(''); setAddAfter({ afterId: sectionId }); }}
                 className="text-xs text-blue-500 hover:text-blue-700"
               >
-                + Add section
+                <Action icon="plusPlusPlus" label="Add section">+ Add section</Action>
               </button>
             )}
           </>
@@ -599,8 +600,8 @@ export default function EditMode() {
         onKeyDown={(e) => onKey(e, createSection, cancelAddSection)}
         autoFocus
       />
-      <button onClick={createSection} className="text-green-600 px-3 py-1 hover:bg-green-50 rounded border border-green-300 text-sm">Add</button>
-      <button onClick={cancelAddSection} className="text-gray-400 px-3 py-1 hover:bg-gray-100 rounded text-sm">Cancel</button>
+      <button onClick={createSection} className="text-green-600 px-3 py-1 hover:bg-green-50 rounded border border-green-300 text-sm"><Action icon="plus">Add</Action></button>
+      <button onClick={cancelAddSection} className="text-gray-400 px-3 py-1 hover:bg-gray-100 rounded text-sm"><Action icon="x">Cancel</Action></button>
     </div>
   );
 
@@ -643,8 +644,8 @@ export default function EditMode() {
               onKeyDown={(e) => { if (e.key === 'Enter') saveLibraryName(); if (e.key === 'Escape') setRenameLibName(null); }}
               autoFocus
             />
-            <button onClick={saveLibraryName} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded border border-green-300">Save</button>
-            <button onClick={() => setRenameLibName(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded">Cancel</button>
+            <button onClick={saveLibraryName} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded border border-green-300"><Action icon="save">Save</Action></button>
+            <button onClick={() => setRenameLibName(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded"><Action icon="x">Cancel</Action></button>
           </>
         ) : (
           <LibraryPicker />
@@ -656,7 +657,7 @@ export default function EditMode() {
               className="text-xs px-2 py-1 border rounded text-gray-600 hover:bg-gray-50"
               title="Rename this library"
             >
-              Rename
+              <Action icon="pencil">Rename</Action>
             </button>
             <button
               onClick={openDeleteLibrary}
@@ -664,7 +665,7 @@ export default function EditMode() {
               title={canDeleteLibrary ? 'Delete this library' : 'At least one library must exist'}
               className="text-xs px-2 py-1 border border-red-200 rounded text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Delete
+              <Action icon="trash">Delete</Action>
             </button>
           </>
         )}
@@ -678,15 +679,15 @@ export default function EditMode() {
               onKeyDown={(e) => { if (e.key === 'Enter') createLibrary(); if (e.key === 'Escape') setNewLibName(null); }}
               autoFocus
             />
-            <button onClick={createLibrary} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded border border-green-300">Add</button>
-            <button onClick={() => setNewLibName(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded">Cancel</button>
+            <button onClick={createLibrary} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded border border-green-300"><Action icon="plus">Add</Action></button>
+            <button onClick={() => setNewLibName(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded"><Action icon="x">Cancel</Action></button>
           </>
         ) : (
           <button
             onClick={() => setNewLibName('')}
             className="text-xs px-2 py-1 text-blue-600 hover:text-blue-800"
           >
-            + New library
+            <Action icon="plus" label="New library">+ New library</Action>
           </button>
         )}
       </div>
@@ -701,14 +702,14 @@ export default function EditMode() {
                 className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
                 title="Download a backup .zip of this library"
               >
-                Export Backup
+                <Action icon="download">Export Backup</Action>
               </a>
               <button
                 onClick={() => backupInputRef.current?.click()}
                 className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
                 title="Restore or import a backup .zip file"
               >
-                Import Backup
+                <Action icon="upload">Import Backup</Action>
               </button>
               <input
                 ref={backupInputRef}
@@ -724,7 +725,7 @@ export default function EditMode() {
             target="_blank"
             className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
           >
-            Export PDF
+            <Action icon="download">Export PDF</Action>
           </a>
         </div>
       </div>
@@ -747,9 +748,9 @@ export default function EditMode() {
                 <option value="null">Unsectioned</option>
                 {sectionTargetOptions}
               </select>
-              <button onClick={bulkDuplicateCases} className="px-2 py-1 rounded text-blue-600 hover:bg-blue-50 border border-blue-200 text-xs">Duplicate</button>
-              <button onClick={bulkExportCasesPDF} className="px-2 py-1 rounded text-gray-600 hover:bg-gray-100 border border-gray-200 text-xs">Export PDF</button>
-              <button onClick={bulkDeleteCases} className="px-2 py-1 rounded text-red-600 hover:bg-red-50 border border-red-200 text-xs">Delete</button>
+              <button onClick={bulkDuplicateCases} className="px-2 py-1 rounded text-blue-600 hover:bg-blue-50 border border-blue-200 text-xs"><Action icon="copy">Duplicate</Action></button>
+              <button onClick={bulkExportCasesPDF} className="px-2 py-1 rounded text-gray-600 hover:bg-gray-100 border border-gray-200 text-xs"><Action icon="download">Export PDF</Action></button>
+              <button onClick={bulkDeleteCases} className="px-2 py-1 rounded text-red-600 hover:bg-red-50 border border-red-200 text-xs"><Action icon="trash">Delete</Action></button>
             </div>
           )}
           {sectionCount > 0 && (
@@ -763,10 +764,10 @@ export default function EditMode() {
                 <option value="">Merge into…</option>
                 {sectionTargetOptions}
               </select>
-              <button onClick={bulkDeleteSections} className="px-2 py-1 rounded text-red-600 hover:bg-red-50 border border-red-200 text-xs">Delete</button>
+              <button onClick={bulkDeleteSections} className="px-2 py-1 rounded text-red-600 hover:bg-red-50 border border-red-200 text-xs"><Action icon="trash">Delete</Action></button>
             </div>
           )}
-          <button onClick={clearSel} className="self-start text-xs text-gray-400 hover:text-gray-600">Clear selection</button>
+          <button onClick={clearSel} className="self-start text-xs text-gray-400 hover:text-gray-600"><Action icon="deselect">Clear selection</Action></button>
         </div>
       )}
 
@@ -812,7 +813,7 @@ export default function EditMode() {
                 disabled={deleteLibBusy || deleteLibTyped !== 'REALLY'}
                 className="flex-1 px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {deleteLibBusy ? 'Deleting…' : 'Delete library'}
+                <Action icon="trash" label="Delete library">{deleteLibBusy ? 'Deleting…' : 'Delete library'}</Action>
               </button>
               <button
                 type="button"
@@ -820,7 +821,7 @@ export default function EditMode() {
                 disabled={deleteLibBusy}
                 className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded disabled:opacity-50"
               >
-                Cancel
+                <Action icon="x">Cancel</Action>
               </button>
             </div>
           </form>
@@ -861,7 +862,7 @@ export default function EditMode() {
                 disabled={importBusy}
                 className="w-full px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded disabled:opacity-50"
               >
-                Cancel
+                <Action icon="x">Cancel</Action>
               </button>
             </div>
             {importBusy && <div className="text-xs text-gray-400 mt-3">Importing…</div>}
@@ -895,13 +896,13 @@ export default function EditMode() {
                   }}
                   className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded"
                 >
-                  Load sample data
+                  <Action icon="sparkles">Load sample data</Action>
                 </button>
                 <button
                   onClick={() => { setNewSectionName(''); setAddAfter({ afterId: null }); }}
                   className="px-3 py-1.5 text-sm border border-gray-300 hover:bg-gray-50 rounded text-gray-700"
                 >
-                  + Add section
+                  <Action icon="plusPlusPlus" label="Add section">+ Add section</Action>
                 </button>
               </div>
             </>
@@ -918,7 +919,7 @@ export default function EditMode() {
               onClick={() => { setNewSectionName(''); setAddAfter({ afterId: null }); }}
               className="text-xs text-blue-500 hover:text-blue-700"
             >
-              + Add section
+              <Action icon="plusPlusPlus" label="Add section">+ Add section</Action>
             </button>
           )}
         </div>
@@ -946,8 +947,8 @@ export default function EditMode() {
                     onKeyDown={(e) => onKey(e, saveSection, () => setEditSection(null))}
                     autoFocus
                   />
-                  <button onClick={saveSection} className="text-green-600 text-sm px-2 py-1 hover:bg-green-50 rounded">Save</button>
-                  <button onClick={() => setEditSection(null)} className="text-gray-400 text-sm px-2 py-1 hover:bg-gray-100 rounded">Cancel</button>
+                  <button onClick={saveSection} className="text-green-600 text-sm px-2 py-1 hover:bg-green-50 rounded"><Action icon="save">Save</Action></button>
+                  <button onClick={() => setEditSection(null)} className="text-gray-400 text-sm px-2 py-1 hover:bg-gray-100 rounded"><Action icon="x">Cancel</Action></button>
                 </>
               ) : (
                 <>
@@ -965,14 +966,14 @@ export default function EditMode() {
                       <button
                         onClick={() => setSectionColor(section.id, null)}
                         title="No color"
-                        className={`w-3.5 h-3.5 rounded-full bg-white border border-gray-300 hover:scale-110 transition-transform ${section.color === null ? 'ring-2 ring-offset-1 ring-blue-400' : ''}`}
+                        className={`w-3.5 h-3.5 rounded-full bg-white border border-gray-300 hover:scale-110 transition-transform transform-gpu ${section.color === null ? 'ring-2 ring-offset-1 ring-blue-400' : ''}`}
                       />
                       {SECTION_COLORS.map((c) => (
                         <button
                           key={c}
                           onClick={() => setSectionColor(section.id, c)}
                           title={c}
-                          className={`w-3.5 h-3.5 rounded-full swatch-${c} border border-black/10 hover:scale-110 transition-transform ${section.color === c ? 'ring-2 ring-offset-1 ring-blue-400' : ''}`}
+                          className={`w-3.5 h-3.5 rounded-full swatch-${c} border border-black/10 hover:scale-110 transition-transform transform-gpu ${section.color === c ? 'ring-2 ring-offset-1 ring-blue-400' : ''}`}
                         />
                       ))}
                     </div>
@@ -991,11 +992,11 @@ export default function EditMode() {
                     <button
                       onClick={() => setEditSection({ id: section.id, name: section.name })}
                       className="px-2 py-1 text-blue-500 hover:text-blue-700 text-sm"
-                    >Edit</button>
+                    ><Action icon="pencil">Edit</Action></button>
                     <button
                       onClick={() => deleteSection(section.id)}
                       className="px-2 py-1 text-red-400 hover:text-red-600 text-sm"
-                    >Delete</button>
+                    ><Action icon="trash">Delete</Action></button>
                   </div>
                 </>
               )}
@@ -1043,13 +1044,13 @@ export default function EditMode() {
               onClick={() => { setBulkAdd(null); setAddCase({ sectionId: null, desc: '' }); }}
               className="text-xs text-gray-400 hover:text-gray-600"
             >
-              + Add unsectioned test case
+              <Action icon="plus" label="Add unsectioned test case">+ Add unsectioned test case</Action>
             </button>
             <button
               onClick={() => { setAddCase(null); setBulkAdd({ sectionId: null, text: '' }); }}
               className="text-xs text-gray-400 hover:text-gray-600"
             >
-              + Add many
+              <Action icon="plusPlus" label="Add many">+ Add many</Action>
             </button>
           </div>
         )}

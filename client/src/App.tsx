@@ -12,23 +12,30 @@ import Login from './pages/Login';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { BrandingProvider } from './branding/BrandingContext';
 import { LibraryProvider } from './library/LibraryContext';
+import { IconModeProvider, useIconMode } from './iconmode/IconMode';
+import Action from './iconmode/Action';
 import Brand from './branding/Brand';
 import { useTheme } from './theme';
 
-function NavItem({ to, label, end }: { to: string; label: string; end?: boolean }) {
+function NavItem({ to, label, icon, end, onClick }: { to: string; label: string; icon: string; end?: boolean; onClick?: () => void }) {
+  const { enabled } = useIconMode();
   return (
     <NavLink
       to={to}
       end={end}
+      onClick={onClick}
+      title={label}
       className={({ isActive }) =>
         `relative block px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+          enabled ? 'text-center' : ''
+        } ${
           isActive
             ? 'bg-white/10 text-white'
             : 'text-gray-300 hover:bg-white/5 hover:text-white'
         }`
       }
     >
-      {label}
+      <Action icon={icon}>{label}</Action>
     </NavLink>
   );
 }
@@ -48,7 +55,7 @@ function UserBadge() {
         onClick={() => logout()}
         className="mt-1 block text-left text-xs text-gray-400 hover:text-gray-200 transition-colors"
       >
-        Sign out
+        <Action icon="logout">Sign out</Action>
       </button>
     </div>
   );
@@ -58,6 +65,7 @@ function UserBadge() {
 // this component just renders the toggle(s).
 function ThemeToggle() {
   const { theme, toggle, reset } = useTheme();
+  const { enabled: iconMode } = useIconMode();
 
   if (theme === 'pastel') {
     return (
@@ -68,7 +76,7 @@ function ThemeToggle() {
           title="Return to the light theme"
         >
           <span>☀️</span>
-          <span>Back to light</span>
+          {!iconMode && <span>Back to light</span>}
         </button>
         <button
           onClick={toggle}
@@ -76,7 +84,7 @@ function ThemeToggle() {
           title="Paint a new random pastel"
         >
           <span>🎨</span>
-          <span>New color</span>
+          {!iconMode && <span>New color</span>}
         </button>
       </div>
     );
@@ -89,7 +97,7 @@ function ThemeToggle() {
       title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
     >
       <span>{theme === 'dark' ? '☀️' : '🌙'}</span>
-      <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+      {!iconMode && <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>}
     </button>
   );
 }
@@ -107,6 +115,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 function AppShell() {
   const { user, isLoading } = useAuth();
+  const { ping } = useIconMode();
 
   if (isLoading) return <div className="text-gray-400 text-sm p-6">Loading…</div>;
 
@@ -128,11 +137,11 @@ function AppShell() {
                 <div className="mb-4 px-1">
                   <Brand variant="dark" />
                 </div>
-                <NavItem to="/" label="Dashboard" end />
-                {canEdit && <NavItem to="/edit" label="Edit Mode" />}
-                {canRun && <NavItem to="/compose" label="New Test Run" />}
-                <NavItem to="/history" label="History" />
-                <NavItem to="/settings" label="Settings" />
+                <NavItem to="/" label="Dashboard" icon="home" end onClick={ping} />
+                {canEdit && <NavItem to="/edit" label="Edit Mode" icon="pencil" />}
+                {canRun && <NavItem to="/compose" label="New Test Run" icon="flask" />}
+                <NavItem to="/history" label="History" icon="clock" />
+                <NavItem to="/settings" label="Settings" icon="gear" />
                 {/* Bottom stack: theme toggle sits above the user badge.
                     `mt-auto` on the wrapper pushes both to the bottom of
                     the sidebar as a single unit. */}
@@ -171,7 +180,9 @@ export default function App() {
       <BrandingProvider>
         <AuthProvider>
           <LibraryProvider>
-            <AppShell />
+            <IconModeProvider>
+              <AppShell />
+            </IconModeProvider>
           </LibraryProvider>
         </AuthProvider>
       </BrandingProvider>

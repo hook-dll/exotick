@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useLibrary } from '../library/LibraryContext';
+import LibraryGlyph from '../library/LibraryGlyph';
+import { formatServerTs } from '../util/serverDate';
 import type { TestRun } from '../types';
 
 export default function History() {
@@ -40,14 +42,17 @@ export default function History() {
         {libraries.length > 1 && (
           <div className="flex items-center gap-2 text-sm">
             <span className="text-xs text-gray-400">Library</span>
-            <select
-              value={libraryFilter}
-              onChange={(e) => setLibraryFilter(e.target.value)}
-              className="border rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-            >
-              <option value="">All libraries</option>
-              {libraryOptions}
-            </select>
+            <span className="lib-select-wrap">
+              <LibraryGlyph className="lib-select-icon" />
+              <select
+                value={libraryFilter}
+                onChange={(e) => setLibraryFilter(e.target.value)}
+                className="lib-select border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              >
+                <option value="">All libraries</option>
+                {libraryOptions}
+              </select>
+            </span>
           </div>
         )}
       </div>
@@ -83,11 +88,11 @@ export default function History() {
                   )}
                   {run.finished_at && (
                     <div className="text-xs text-gray-400 mt-0.5">
-                      {new Date(run.finished_at).toLocaleString()}
+                      {formatServerTs(run.finished_at)}
                     </div>
                   )}
                 </div>
-                <span className="text-gray-300 group-hover:text-blue-400 text-lg">→</span>
+                <span className="text-gray-400 group-hover:text-blue-500 text-2xl leading-none group-hover:translate-x-1 transition-transform">→</span>
               </div>
             </Link>
           ))}
