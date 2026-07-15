@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snake Game</title>
+  <style>
+    :root {
+      --bg-primary: #0f0f1e;
+      --bg-secondary: #1a1a2e;
+      --grid-color: #2d2d4a;
+      --text-primary: #e0e0ff;
+      --text-secondary: #a8a8d0;
+      --snake-color: #00ff88;
+      --food-color: #ff00ff;
+      --accent: #00ffff;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg-primary: #f5f5fa;
+        --bg-secondary: #ffffff;
+        --grid-color: #e8e8f0;
+        --text-primary: #1a1a2e;
+        --text-secondary: #4a4a6a;
+        --snake-color: #00aa44;
+        --food-color: #dd0099;
+        --accent: #0088ff;
+      }
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.5px;
+      text-align: center;
+    }
+
+    .game-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .stats {
+      display: flex;
+      gap: 32px;
+      font-size: 15px;
+      color: var(--text-secondary);
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      opacity: 0.7;
+    }
+
+    .stat-value {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    canvas {
+      display: block;
+      background-color: var(--bg-secondary);
+      border-radius: 8px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      image-rendering: pixelated;
+    }
+
+    .controls {
+      font-size: 14px;
+      color: var(--text-secondary);
+      text-align: center;
+      line-height: 1.8;
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background-color: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      animation: fadeIn 0.3s ease-out;
+    }
+
+    .modal.active {
+      display: flex;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
+    .modal-content {
+      background-color: var(--bg-secondary);
+      border: 2px solid var(--accent);
+      border-radius: 12px;
+      padding: 40px 32px;
+      text-align: center;
+      box-shadow: 0 40px 80px rgba(0, 0, 0, 0.5);
+      animation: slideUp 0.3s ease-out;
+    }
+
+    @keyframes slideUp {
+      from {
+        transform: translateY(20px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    .modal h2 {
+      font-size: 24px;
+      margin-bottom: 12px;
+      color: var(--food-color);
+    }
+
+    .modal-score {
+      display: flex;
+      gap: 32px;
+      justify-content: center;
+      margin: 24px 0;
+      font-size: 14px;
+    }
+
+    .modal-score-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .modal-score-value {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .modal-score-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-secondary);
+      opacity: 0.8;
+    }
+
+    button {
+      background-color: var(--snake-color);
+      color: var(--bg-primary);
+      border: none;
+      border-radius: 6px;
+      padding: 12px 28px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 20px;
+      transition: all 0.2s ease;
+      letter-spacing: 0.5px;
+    }
+
+    button:hover {
+      background-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 16px rgba(0, 255, 136, 0.2);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    .instructions {
+      font-size: 13px;
+      color: var(--text-secondary);
+      opacity: 0.7;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🐍 Snake</h1>
+    
+    <div class="game-wrapper">
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-label">Score</div>
+          <div class="stat-value" id="score">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Speed</div>
+          <div class="stat-value" id="speed">1</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Length</div>
+          <div class="stat-value" id="length">3</div>
+        </div>
+      </div>
+
+      <canvas id="gameCanvas" width="400" height="400"></canvas>
+
+      <div class="controls">
+        <div>Use arrow keys or WASD to move</div>
+        <div>Eat the food to grow and score</div>
+      </div>
+    </div>
+
+    <div class="instructions">
+      Press Space to start or restart
+    </div>
+  </div>
+
+  <div class="modal" id="gameOverModal">
+    <div class="modal-content">
+      <h2>Game Over</h2>
+      <div class="modal-score">
+        <div class="modal-score-item">
+          <div class="modal-score-label">Final Score</div>
+          <div class="modal-score-value" id="finalScore">0</div>
+        </div>
+        <div class="modal-score-item">
+          <div class="modal-score-label">Max Speed</div>
+          <div class="modal-score-value" id="maxSpeed">1</div>
+        </div>
+        <div class="modal-score-item">
+          <div class="modal-score-label">Length</div>
+          <div class="modal-score-value" id="finalLength">3</div>
+        </div>
+      </div>
+      <button onclick="game.restart()">Play Again</button>
+    </div>
+  </div>
+
+  <script>
+    class SnakeGame {
+      constructor() {
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.gridSize = 20;
+        this.cols = this.canvas.width / this.gridSize;
+        this.rows = this.canvas.height / this.gridSize;
+
+        this.reset();
+        this.setupControls();
+        this.drawGrid();
+      }
+
+      reset() {
+        this.snake = [
+          { x: Math.floor(this.cols / 2), y: Math.floor(this.rows / 2) },
+          { x: Math.floor(this.cols / 2) - 1, y: Math.floor(this.rows / 2) },
+          { x: Math.floor(this.cols / 2) - 2, y: Math.floor(this.rows / 2) }
+        ];
+        this.direction = { x: 1, y: 0 };
+        this.nextDirection = { x: 1, y: 0 };
+        this.food = this.spawnFood();
+        this.score = 0;
+        this.speedLevel = 1;
+        this.gameRunning = false;
+        this.gameOver = false;
+        this.baseSpeed = 150;
+        this.lastMoveTime = Date.now();
+        this.updateUI();
+      }
+
+      setupControls() {
+        const directionMap = {
+          'ArrowUp': { x: 0, y: -1 },
+          'ArrowDown': { x: 0, y: 1 },
+          'ArrowLeft': { x: -1, y: 0 },
+          'ArrowRight': { x: 1, y: 0 },
+          'w': { x: 0, y: -1 },
+          'W': { x: 0, y: -1 },
+          's': { x: 0, y: 1 },
+          'S': { x: 0, y: 1 },
+          'a': { x: -1, y: 0 },
+          'A': { x: -1, y: 0 },
+          'd': { x: 1, y: 0 },
+          'D': { x: 1, y: 0 }
+        };
+
+        document.addEventListener('keydown', (e) => {
+          if (e.key === ' ') {
+            e.preventDefault();
+            if (!this.gameRunning || this.gameOver) {
+              this.start();
+            }
+          }
+
+          if (directionMap[e.key]) {
+            e.preventDefault();
+            const newDir = directionMap[e.key];
+            // Prevent reversing into itself
+            if (!(newDir.x === -this.direction.x && newDir.y === -this.direction.y)) {
+              this.nextDirection = newDir;
+            }
+          }
+        });
+      }
+
+      spawnFood() {
+        let newFood;
+        let isOnSnake;
+        do {
+          isOnSnake = false;
+          newFood = {
+            x: Math.floor(Math.random() * this.cols),
+            y: Math.floor(Math.random() * this.rows)
+          };
+          for (let segment of this.snake) {
+            if (segment.x === newFood.x && segment.y === newFood.y) {
+              isOnSnake = true;
+              break;
+            }
+          }
+        } while (isOnSnake);
+        return newFood;
+      }
+
+      start() {
+        if (!this.gameRunning) {
+          this.gameRunning = true;
+          this.gameOver = false;
+          document.getElementById('gameOverModal').classList.remove('active');
+          this.update();
+        }
+      }
+
+      update() {
+        if (!this.gameRunning) return;
+
+        const now = Date.now();
+        const frameTime = 1000 / (this.speedLevel * 4); // Max 4x speed
+        
+        if (now - this.lastMoveTime >= frameTime) {
+          this.lastMoveTime = now;
+          this.direction = this.nextDirection;
+
+          const head = { ...this.snake[0] };
+          head.x += this.direction.x;
+          head.y += this.direction.y;
+
+          // Wall collision
+          if (head.x < 0 || head.x >= this.cols || head.y < 0 || head.y >= this.rows) {
+            this.endGame();
+            return;
+          }
+
+          // Self collision
+          for (let segment of this.snake) {
+            if (head.x === segment.x && head.y === segment.y) {
+              this.endGame();
+              return;
+            }
+          }
+
+          this.snake.unshift(head);
+
+          // Food collision
+          if (head.x === this.food.x && head.y === this.food.y) {
+            this.score += 10;
+            this.speedLevel = Math.min(5, 1 + Math.floor(this.score / 50));
+            this.food = this.spawnFood();
+            this.updateUI();
+          } else {
+            this.snake.pop();
+          }
+        }
+
+        this.draw();
+        requestAnimationFrame(() => this.update());
+      }
+
+      draw() {
+        // Draw background
+        this.ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg-secondary');
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Draw grid
+        this.drawGrid();
+
+        // Draw food
+        const foodColor = getComputedStyle(document.documentElement).getPropertyValue('--food-color');
+        this.ctx.fillStyle = foodColor;
+        this.ctx.fillRect(
+          this.food.x * this.gridSize + 2,
+          this.food.y * this.gridSize + 2,
+          this.gridSize - 4,
+          this.gridSize - 4
+        );
+
+        // Draw glow effect on food
+        this.ctx.shadowColor = foodColor;
+        this.ctx.shadowBlur = 8;
+        this.ctx.fillRect(
+          this.food.x * this.gridSize + 2,
+          this.food.y * this.gridSize + 2,
+          this.gridSize - 4,
+          this.gridSize - 4
+        );
+        this.ctx.shadowColor = 'transparent';
+
+        // Draw snake
+        const snakeColor = getComputedStyle(document.documentElement).getPropertyValue('--snake-color');
+        for (let i = 0; i < this.snake.length; i++) {
+          const segment = this.snake[i];
+          const isHead = i === 0;
+          
+          // Gradient effect for head
+          if (isHead) {
+            this.ctx.fillStyle = snakeColor;
+            this.ctx.shadowColor = snakeColor;
+            this.ctx.shadowBlur = 12;
+          } else {
+            const opacity = 1 - (i / this.snake.length) * 0.6;
+            this.ctx.fillStyle = snakeColor + Math.floor(opacity * 255).toString(16).padStart(2, '0');
+            this.ctx.shadowColor = 'transparent';
+          }
+
+          this.ctx.fillRect(
+            segment.x * this.gridSize + 1,
+            segment.y * this.gridSize + 1,
+            this.gridSize - 2,
+            this.gridSize - 2
+          );
+        }
+        this.ctx.shadowColor = 'transparent';
+      }
+
+      drawGrid() {
+        const gridColor = getComputedStyle(document.documentElement).getPropertyValue('--grid-color');
+        this.ctx.strokeStyle = gridColor;
+        this.ctx.lineWidth = 0.5;
+
+        for (let i = 0; i <= this.cols; i++) {
+          this.ctx.beginPath();
+          this.ctx.moveTo(i * this.gridSize, 0);
+          this.ctx.lineTo(i * this.gridSize, this.canvas.height);
+          this.ctx.stroke();
+        }
+
+        for (let i = 0; i <= this.rows; i++) {
+          this.ctx.beginPath();
+          this.ctx.moveTo(0, i * this.gridSize);
+          this.ctx.lineTo(this.canvas.width, i * this.gridSize);
+          this.ctx.stroke();
+        }
+      }
+
+      updateUI() {
+        document.getElementById('score').textContent = this.score;
+        document.getElementById('speed').textContent = this.speedLevel;
+        document.getElementById('length').textContent = this.snake.length;
+      }
+
+      endGame() {
+        this.gameRunning = false;
+        this.gameOver = true;
+        
+        document.getElementById('finalScore').textContent = this.score;
+        document.getElementById('maxSpeed').textContent = this.speedLevel;
+        document.getElementById('finalLength').textContent = this.snake.length;
+        document.getElementById('gameOverModal').classList.add('active');
+      }
+
+      restart() {
+        this.reset();
+        this.start();
+      }
+    }
+
+    const game = new SnakeGame();
+  </script>
+</body>
+</html>
