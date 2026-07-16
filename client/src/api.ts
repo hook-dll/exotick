@@ -122,6 +122,12 @@ export const api = {
       req<{ ok: boolean; deleted: number }>('POST', '/test-cases/bulk-delete', { ids }),
     bulkDuplicate: (ids: number[]) =>
       req<{ created: number; cases: TestCase[] }>('POST', '/test-cases/bulk-duplicate', { ids }),
+    // Copy selected cases + their sections (by name+color) into ANOTHER
+    // library, non-destructively. section_ids covers empty sections selected
+    // on their own.
+    bulkCopy: (target_library_id: number, case_ids: number[], section_ids: number[]) =>
+      req<{ ok: boolean; copiedCases: number; sectionsCreated: number; library: Library }>(
+        'POST', '/test-cases/bulk-copy', { target_library_id, case_ids, section_ids }),
   },
 
   testRuns: {

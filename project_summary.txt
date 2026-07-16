@@ -178,6 +178,20 @@ exotick/
                                   library_id), POST /bulk-delete,
                                   POST /bulk-duplicate (duplicates land
                                   in the SAME library as each source),
+                                  POST /bulk-copy (copies selected cases +
+                                  their sections to ANOTHER library —
+                                  body: target_library_id, case_ids[],
+                                  section_ids[]; non-destructive, source
+                                  untouched. Each source section is
+                                  re-created in the target by NAME + COLOR
+                                  (reused if an exact name+color match
+                                  already exists there, else created with
+                                  the source color); copied cases + notes
+                                  append to the END of that section.
+                                  Unsectioned cases append to the end of
+                                  the target's unsectioned pile.
+                                  section_ids materialises empty sections
+                                  selected on their own),
                                   PUT /:id (cross-library section moves
                                   rejected), DELETE /:id
         testRuns.ts               GET /?status=&library_id= (both

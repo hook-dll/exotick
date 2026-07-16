@@ -339,6 +339,28 @@ export default function EditMode() {
     window.open(testCasesPdfUrl(activeLibraryId, ids), '_blank');
   };
 
+  // Copy the whole current selection (cases + sections) into ANOTHER library,
+  // non-destructively. The source library is untouched, so no refetch here.
+  // Sections are recreated in the target by name+color (see routes/testCases.ts).
+  const [copyBusy, setCopyBusy] = useState(false);
+  const bulkCopyToLibrary = async (targetLibraryId: number) => {
+    const caseIds = [...selCases];
+    const sectionIds = [...selSections];
+    if ((caseIds.length === 0 && sectionIds.length === 0) || activeLibraryId == null) return;
+    const targetName = libraries.find((l) => l.id === targetLibraryId)?.name ?? 'library';
+    setCopyBusy(true);
+    try {
+      const r = await api.testCases.bulkCopy(targetLibraryId, caseIds, sectionIds);
+      const secPart = r.sectionsCreated > 0 ? ` (${r.sectionsCreated} new section${r.sectionsCreated > 1 ? 's' : ''})` : '';
+      flash(`Copied ${r.copiedCases} case${r.copiedCases === 1 ? '' : 's'}${secPart} to "${r.library?.name ?? targetName}".`);
+      clearSel();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setCopyBusy(false);
+    }
+  };
+
   // ── Bulk section operations ──────────────────────────────────
   const mergeSections = async (targetId: number) => {
     const sources = [...selSections].filter((id) => id !== targetId);
@@ -765,6 +787,27 @@ export default function EditMode() {
                 {sectionTargetOptions}
               </select>
               <button onClick={bulkDeleteSections} className="px-2 py-1 rounded text-red-600 hover:bg-red-50 border border-red-200 text-xs"><Action icon="trash">Delete</Action></button>
+            </div>
+          )}
+          {/* Copy the whole selection into ANOTHER library. Non-destructive —
+              recreates each source section (by name + color) in the target and
+              appends the copied cases; unsectioned cases go to the target's
+              unsectioned pile. Shown only when another library exists. */}
+          {libraries.length > 1 && (
+            <div className="flex items-center flex-wrap gap-2 text-sm border-t pt-2">
+              <span className="text-gray-600">Copy selection to another library</span>
+              <select
+                value=""
+                disabled={copyBusy}
+                onChange={(e) => { const v = e.target.value; if (v !== '') bulkCopyToLibrary(Number(v)); }}
+                className="border rounded px-2 py-1 text-sm text-gray-600 max-w-[12rem] truncate focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50"
+                title="Copy the selected sections and cases into another library"
+              >
+                <option value="" disabled hidden>{copyBusy ? 'Copying…' : 'Copy to…'}</option>
+                {libraries.filter((l) => l.id !== activeLibraryId).map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
             </div>
           )}
           <button onClick={clearSel} className="self-start text-xs text-gray-400 hover:text-gray-600"><Action icon="deselect">Clear selection</Action></button>

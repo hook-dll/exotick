@@ -170,6 +170,105 @@ router.post('/bulk-duplicate', (req, res) => {
   res.status(201).json({ created: created.length, cases: created });
 });
 
+// Copy selected cases (and the sections they belong to) into ANOTHER library.
+// Unlike bulk-duplicate (which stays in the source library), this recreates
+// each source section in the destination by NAME + COLOR — reusing a
+// destination section that already matches exactly, otherwise creating one
+// that carries the source color — and appends the copied cases there.
+// Unsectioned cases append to the end of the destination's unsectioned pile.
+// Explicitly-selected sections are materialised even when they have no
+// selected cases (covers copying an empty section). Originals are never
+// touched: this is a copy, not a move.
+router.post('/bulk-copy', (req, res) => {
+  const { target_library_id, case_ids, section_ids } = req.body ?? {};
+  const targetId = Number(target_library_id);
+  if (!Number.isInteger(targetId) || !requireLibrary(targetId)) {
+    return res.status(400).json({ error: 'Valid target_library_id required' });
+  }
+  const caseIds = Array.isArray(case_ids) ? (case_ids as any[]).map(Number).filter(Number.isInteger) : [];
+  const sectionIds = Array.isArray(section_ids) ? (section_ids as any[]).map(Number).filter(Number.isInteger) : [];
+  if (caseIds.length === 0 && sectionIds.length === 0) {
+    return res.status(400).json({ error: 'Nothing selected to copy' });
+  }
+
+  // `color IS ?` matches NULL-to-NULL and value-to-value alike, so a bound
+  // null finds the destination's no-color section and a bound color finds the
+  // exact colored one.
+  const findDestSection = db.prepare('SELECT id FROM sections WHERE library_id = ? AND name = ? AND color IS ?');
+  const insertSection = db.prepare('INSERT INTO sections (name, order_index, color, library_id) VALUES (?, ?, ?, ?)');
+  const getSection = db.prepare('SELECT id, name, color, order_index FROM sections WHERE id = ?');
+  const insertCase = db.prepare('INSERT INTO test_cases (section_id, description, notes, order_index, library_id) VALUES (?, ?, ?, ?, ?)');
+
+  let copiedCases = 0;
+  let sectionsCreated = 0;
+
+  transaction(() => {
+    // Load selected cases grouped by source section then source order, so the
+    // copies land in the destination in the same relative order.
+    let cases: any[] = [];
+    if (caseIds.length > 0) {
+      const ph = caseIds.map(() => '?').join(',');
+      cases = db.prepare(
+        `SELECT id, description, notes, section_id, order_index
+           FROM test_cases WHERE id IN (${ph})
+          ORDER BY (section_id IS NULL), section_id, order_index, id`
+      ).all(...caseIds) as any[];
+    }
+
+    // Distinct source sections to materialise: every section referenced by a
+    // selected case, plus every explicitly-selected section (empty ones too).
+    const neededSrcSectionIds = new Set<number>();
+    for (const c of cases) if (c.section_id != null) neededSrcSectionIds.add(c.section_id);
+    for (const sid of sectionIds) neededSrcSectionIds.add(sid);
+
+    // Materialise sections in source display order so newly-created ones keep
+    // a sensible top-to-bottom order in the destination.
+    const srcToDest = new Map<number, number>();
+    let nextSectionOrder = (db.prepare('SELECT MAX(order_index) as max FROM sections WHERE library_id = ?').get(targetId) as any)?.max ?? -1;
+    const srcSections = [...neededSrcSectionIds]
+      .map((id) => getSection.get(id) as any)
+      .filter(Boolean)
+      .sort((a, b) => a.order_index - b.order_index || a.id - b.id);
+    for (const s of srcSections) {
+      const existing = findDestSection.get(targetId, s.name, s.color ?? null) as any;
+      if (existing) {
+        srcToDest.set(s.id, existing.id);
+      } else {
+        const r = insertSection.run(s.name, ++nextSectionOrder, s.color ?? null, targetId);
+        srcToDest.set(s.id, Number(r.lastInsertRowid));
+        sectionsCreated++;
+      }
+    }
+
+    // Running append-order per destination bucket. Key: dest section id, or
+    // 'null' for the unsectioned pile. Seeded lazily from the current max so
+    // copies land at the END of whatever's already there.
+    const bucketOrder = new Map<string, number>();
+    const nextInBucket = (destSectionId: number | null): number => {
+      const key = destSectionId === null ? 'null' : String(destSectionId);
+      if (!bucketOrder.has(key)) {
+        const max = destSectionId === null
+          ? (db.prepare('SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND section_id IS NULL').get(targetId) as any)?.max ?? -1
+          : (db.prepare('SELECT MAX(order_index) as max FROM test_cases WHERE section_id = ?').get(destSectionId) as any)?.max ?? -1;
+        bucketOrder.set(key, max);
+      }
+      const next = bucketOrder.get(key)! + 1;
+      bucketOrder.set(key, next);
+      return next;
+    };
+
+    for (const c of cases) {
+      const destSectionId = c.section_id == null ? null : (srcToDest.get(c.section_id) ?? null);
+      insertCase.run(destSectionId, c.description, c.notes ?? null, nextInBucket(destSectionId), targetId);
+      copiedCases++;
+    }
+  });
+
+  const library = libraryById(targetId);
+  writeEvent({ eventType: 'edit', actor: req.user!.username, library });
+  res.status(201).json({ ok: true, copiedCases, sectionsCreated, library });
+});
+
 router.put('/:id', (req, res) => {
   const { description, section_id, notes } = req.body ?? {};
   if (!description?.trim()) return res.status(400).json({ error: 'Description required' });
