@@ -8,7 +8,9 @@ const router = Router();
 router.use(requireRole('editor'));
 
 type SampleCase = { description: string; notes?: string | null };
-type SampleSection = { name: string; color: string | null; cases: SampleCase[] };
+// `module` groups a section under a module container. Sections without one
+// stay at the library root — the seed shows off both levels.
+type SampleSection = { name: string; color: string | null; module?: string; cases: SampleCase[] };
 
 // Realistic QA-flavored seed data — shows off sections, colors, markdown notes,
 // and enough cases to demonstrate the split-view preview and Compose flow.
@@ -16,6 +18,7 @@ const SAMPLES: SampleSection[] = [
   {
     name: 'Auth',
     color: 'blue',
+    module: 'Core Flows',
     cases: [
       { description: 'Sign up with valid email creates an account', notes: 'Use a fresh email that isn\'t already registered.\n\n**Expected:** confirmation banner + redirect to onboarding.' },
       { description: 'Sign in with correct password lands on Dashboard' },
@@ -27,6 +30,7 @@ const SAMPLES: SampleSection[] = [
   {
     name: 'Checkout',
     color: 'green',
+    module: 'Core Flows',
     cases: [
       { description: 'Add an item to the cart from the product page' },
       { description: 'Remove an item from the cart updates the total' },
@@ -95,9 +99,10 @@ export function seedSamplesLibrary(): { library: unknown; sectionsAdded: number;
   while (existingNames.has(name)) name = `Samples (${n++})`;
 
   const insertLibrary = db.prepare('INSERT INTO libraries (name, order_index) VALUES (?, ?)');
-  const insertSection = db.prepare('INSERT INTO sections (name, order_index, color, library_id) VALUES (?, ?, ?, ?)');
+  const insertModule = db.prepare('INSERT INTO modules (name, order_index, library_id) VALUES (?, ?, ?)');
+  const insertSection = db.prepare('INSERT INTO sections (name, order_index, color, library_id, module_id) VALUES (?, ?, ?, ?, ?)');
   const insertCase = db.prepare(
-    'INSERT INTO test_cases (section_id, description, notes, order_index, library_id) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO test_cases (section_id, description, notes, order_index, library_id, module_id) VALUES (?, ?, ?, ?, ?, ?)'
   );
 
   let libraryId = 0;
@@ -108,19 +113,35 @@ export function seedSamplesLibrary(): { library: unknown; sectionsAdded: number;
     const libInfo = insertLibrary.run(name, maxOrder + 1);
     libraryId = Number(libInfo.lastInsertRowid);
 
-    SAMPLES.forEach((s, sIdx) => {
-      const info = insertSection.run(s.name, sIdx, s.color, libraryId);
+    // Create the modules referenced by the seed sections (in first-seen order).
+    const moduleIdByName = new Map<string, number>();
+    let moduleOrder = 0;
+    for (const s of SAMPLES) {
+      if (s.module && !moduleIdByName.has(s.module)) {
+        const info = insertModule.run(s.module, moduleOrder++, libraryId);
+        moduleIdByName.set(s.module, Number(info.lastInsertRowid));
+      }
+    }
+
+    // Section order_index is per-bucket (module, or root); track each bucket.
+    const nextSectionOrder = new Map<string, number>();
+    SAMPLES.forEach((s) => {
+      const moduleId = s.module ? moduleIdByName.get(s.module)! : null;
+      const bucket = s.module ?? 'root';
+      const sIdx = nextSectionOrder.get(bucket) ?? 0;
+      nextSectionOrder.set(bucket, sIdx + 1);
+      const info = insertSection.run(s.name, sIdx, s.color, libraryId, moduleId);
       const sectionId = Number(info.lastInsertRowid);
       sectionsAdded++;
       s.cases.forEach((c, cIdx) => {
-        insertCase.run(sectionId, c.description, c.notes ?? null, cIdx, libraryId);
+        insertCase.run(sectionId, c.description, c.notes ?? null, cIdx, libraryId, moduleId);
         casesAdded++;
       });
     });
 
-    // Unsectioned cases live with section_id = NULL.
+    // Unsectioned cases live at the library root (section_id = NULL, module_id = NULL).
     SAMPLE_UNSECTIONED.forEach((c, cIdx) => {
-      insertCase.run(null, c.description, c.notes ?? null, cIdx, libraryId);
+      insertCase.run(null, c.description, c.notes ?? null, cIdx, libraryId, null);
       casesAdded++;
     });
   });

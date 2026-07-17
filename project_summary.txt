@@ -1,7 +1,7 @@
 ================================================================================
 exotick — Developer / Maintainer Reference
 ================================================================================
-Last updated: 2026-07-13
+Last updated: 2026-07-17
 
 Everything a maintainer needs to reconstruct or modify the system. Dry and
 authoritative. If it isn't here, it isn't a stable feature.
@@ -62,8 +62,17 @@ exotick/
     uploads/                      user-uploaded images referenced by notes
     branding/                     admin-uploaded logo (single file)
   server/
-    package.json
-    tsconfig.json                 CommonJS, ES2020, strict
+    package.json                  adds `npm test` — node:test via tsx
+    tsconfig.json                 CommonJS, ES2020, strict (compiles src/
+                                  only; test/ is excluded from the build)
+    test/
+      modules.test.ts             node:test integration suite for the module
+                                  feature — mounts the real routers behind a
+                                  stub auth middleware against a temp-dir DB;
+                                  covers module CRUD, the /sections tree,
+                                  move-module, bulk-move, bulk-copy across
+                                  libraries, compose snapshots, and the
+                                  backup v4 round-trip. `npm test`.
     src/
       index.ts                    Express app entry; trust proxy=1;
                                   global security headers on every response
@@ -163,13 +172,35 @@ exotick/
                                   references the library OR when it's the
                                   last one remaining (there must always
                                   be at least one container).
-        sections.ts               GET /?library_id=N (read, any auth,
-                                  library_id required); router.use
+        modules.ts                Module CRUD (the optional "big section"
+                                  container). GET /?library_id=N (read,
+                                  runner+, flat module list); router.use
                                   requireRole('editor') below; POST / (
-                                  requires library_id in body),
-                                  PUT /reorder, POST /bulk-delete,
-                                  POST /merge (all participants must be
-                                  in the same library), PUT /:id,
+                                  requires library_id; optional after_id for
+                                  insert position), PUT /reorder, PUT /:id
+                                  (rename), DELETE /:id (frees the module's
+                                  sections + module-level unsectioned cases
+                                  back to the library root via ON DELETE SET
+                                  NULL, renumbering them onto the end of the
+                                  root buckets — content is never destroyed).
+        sections.ts               GET /?library_id=N (read, runner+,
+                                  library_id required) now returns a
+                                  module-grouped TREE:
+                                    { modules: [{ id, name, order_index,
+                                        sections: [...], unsectioned: [...] }],
+                                      sections:    [...],  // module_id NULL
+                                      unsectioned: [...] } // module_id NULL
+                                  router.use requireRole('editor') below;
+                                  POST / (requires library_id; optional
+                                  module_id + after_id — order_index scoped
+                                  to the (library, module) bucket),
+                                  PUT /reorder, POST /bulk-delete (freed cases
+                                  stay in the SAME module as unsectioned),
+                                  POST /move-module (move whole sections +
+                                  their cases into a module or to root;
+                                  cascades module_id onto the cases),
+                                  POST /merge (participants must share the
+                                  same library AND module), PUT /:id,
                                   DELETE /:id
         testCases.ts              editor+ throughout; POST / (requires
                                   library_id), POST /bulk (requires
@@ -178,22 +209,32 @@ exotick/
                                   library_id), POST /bulk-delete,
                                   POST /bulk-duplicate (duplicates land
                                   in the SAME library as each source),
-                                  POST /bulk-copy (copies selected cases +
-                                  their sections to ANOTHER library —
+                                  POST /bulk-copy (copies selected modules +
+                                  sections + cases to ANOTHER library —
                                   body: target_library_id, case_ids[],
-                                  section_ids[]; non-destructive, source
-                                  untouched. Each source section is
-                                  re-created in the target by NAME + COLOR
-                                  (reused if an exact name+color match
-                                  already exists there, else created with
-                                  the source color); copied cases + notes
-                                  append to the END of that section.
-                                  Unsectioned cases append to the end of
-                                  the target's unsectioned pile.
-                                  section_ids materialises empty sections
-                                  selected on their own),
+                                  section_ids[], module_ids[]; non-
+                                  destructive, source untouched. Modules are
+                                  re-created by NAME (reused if a same-named
+                                  module already exists there); sections by
+                                  NAME + COLOR *within their destination
+                                  module* (a "Checkout" in module A is
+                                  distinct from a root "Checkout"); copied
+                                  cases append to the END of their bucket;
+                                  unsectioned cases append to the target
+                                  module's / root's unsectioned pile.
+                                  module_ids / section_ids materialise empty
+                                  modules / sections selected on their own.
+                                  The client includes every descendant id
+                                  when a module/section box is ticked, so
+                                  "copy a whole module" is just its full
+                                  subtree in the selection),
+                                  PATCH /bulk-move accepts module_id (moves
+                                  cases into a module's unsectioned pile; a
+                                  section target derives the module),
                                   PUT /:id (cross-library section moves
-                                  rejected), DELETE /:id
+                                  rejected; a section move derives module_id,
+                                  clearing the section keeps the module),
+                                  DELETE /:id
         testRuns.ts               GET /?status=&library_id= (both
                                   filters optional; response carries
                                   library_name and server-computed
@@ -208,6 +249,8 @@ exotick/
                                   derives library_id from selected
                                   case_ids and REJECTS with 400 if the
                                   selection spans multiple libraries;
+                                  items are ordered module → section → case
+                                  and each snapshots snapshot_module_name;
                                   also rejects runner_name that resolves
                                   to an admin. POST /:id/start
                                   requireCanRun + assertOwnership;
@@ -250,14 +293,24 @@ exotick/
                                   GET /test-runs/:id (PDF, includes
                                   Contributors summary from items'
                                   updated_by); Cache-Control: no-store on
-                                  both
+                                  both. Both PDFs render module → section
+                                  grouping: module names print as upper-case
+                                  top-level headings with the sections
+                                  indented beneath; library-root content
+                                  prints flush-left as before.
         upload.ts                 POST / (editor+, multer disk storage,
                                   extension+mimetype whitelist for PNG/JPG/
                                   GIF/WebP — no SVG, 10 MB)
         backup.ts                 admin+ throughout; per-library scope.
+                                  backup.json is VERSION 4: carries a
+                                  `modules` array (each with its own
+                                  sections + unsectioned) alongside the
+                                  root sections/unsectioned. v1-v3 (no
+                                  modules) still import at the root.
                                   GET /export?library_id=N (.zip with
                                   backup.json — carrying library.name —
-                                  + uploads/ referenced by notes).
+                                  + uploads/ referenced by notes, including
+                                  notes on module-nested cases).
                                   POST /import (multipart temp file up to
                                   100 MB, written to the OS temp dir — NOT
                                   UPLOADS_DIR, so it's never served)
@@ -285,7 +338,10 @@ exotick/
         samples.ts                editor+; POST /load ALWAYS creates a
                                   new library called "Samples" (or
                                   "Samples (2)" if taken) and seeds it.
-                                  Never touches existing libraries.
+                                  Never touches existing libraries. The seed
+                                  now wraps the Auth + Checkout sections in a
+                                  "Core Flows" module to demonstrate the
+                                  module layer; other sections stay at root.
         settings.ts               GET /take-over-cooldown (any authed;
                                   returns {minutes}); PUT (admin, range
                                   0-10080). getCooldownMinutes() helper
@@ -345,7 +401,11 @@ exotick/
                                   testCasesPdfUrl(library_id, ids?) for
                                   <a href> downloads. api.libraries
                                   {list, create, rename, delete, reorder},
-                                  sections, testCases, testRuns (list
+                                  api.modules {list, create, rename, delete,
+                                  reorder}; sections.list returns the module
+                                  tree (LibraryContent) + sections.moveModule;
+                                  testCases.bulkMove takes module_id and
+                                  bulkCopy takes module_ids[]; testRuns (list
                                   takes { status?, library_id? }),
                                   auth {me, login, logout, changePassword,
                                   listSessions, revokeSession}, users
@@ -353,10 +413,15 @@ exotick/
                                   resetPassword, delete}, samples,
                                   backup {import — new/merge/replace},
                                   branding {get, update}, upload {image}
-      types.ts                    SectionColor, Section, TestCase,
-                                  TestRun (with library_id + library_name
-                                  + cooldown_active?), TestRunWithItems,
-                                  TestRunItem (with updated_by; no
+      types.ts                    SectionColor, Section (+ module_id),
+                                  TestCase (+ module_id), Module (nested:
+                                  sections[] + unsectioned[]), LibraryContent
+                                  ({ modules, sections, unsectioned } — the
+                                  GET /sections tree), ModuleSummary (flat
+                                  row), TestRun (with library_id +
+                                  library_name + cooldown_active?),
+                                  TestRunWithItems, TestRunItem (with
+                                  updated_by + snapshot_module_name; no
                                   updated_at — privacy), Library,
                                   LogEvent (with library_id + library_name
                                   snapshots), Role, User, AuthMe,
@@ -364,13 +429,21 @@ exotick/
       theme.ts                    useTheme hook (light/dark/pastel,
                                   pastel via 7 clicks within 1.5s each)
       index.css                   Tailwind + centralized dark/pastel remap +
-                                  section-tint-* classes
+                                  section-tint-* classes + module-shell /
+                                  module-header (fixed dark-slate module
+                                  container, same gradient as the left nav,
+                                  not color-customizable)
       util/
         serverDate.ts             parseServerTs — normalizes SQLite
                                   "YYYY-MM-DD HH:MM:SS" UTC-without-Z
                                   strings to canonical ISO before
                                   Date.parse. Used by every elapsed-time
                                   computation on the client.
+        runGroups.ts              buildModuleBlocks(items) — reconstructs the
+                                  module → section grouping of a run's items
+                                  in one ordered pass (items arrive ordered
+                                  module → section → case). Shared by
+                                  ActiveTestRun + HistoryDetail.
       library/
         LibraryContext.tsx        LibraryProvider + useLibrary. Fetches
                                   /api/libraries when a user is signed in;
@@ -425,7 +498,21 @@ exotick/
                                   cooldownMinutesLeft (via parseServerTs)
                                   disables Take over during cooldown with
                                   tooltip; role-gated shortcut tiles
-        EditMode.tsx              Library toolbar at the top (Picker +
+        EditMode.tsx              Modules render as slate-header containers
+                                  (the left-nav gradient, .module-shell +
+                                  .module-header in index.css) grouping their
+                                  sections + a module-level unsectioned pile;
+                                  root sections/unsectioned render beneath.
+                                  Module CRUD (create / rename / delete /
+                                  reorder) inline on the slate bar; content
+                                  moves between modules via the section
+                                  "Move to module…" picker (sections.
+                                  moveModule) and the case "Move to…" picker
+                                  (grouped by module). Selecting a module
+                                  ticks its whole subtree; copy-to-library
+                                  carries module_ids. Module color is fixed
+                                  (no picker) by design.
+                                  Library toolbar at the top (Picker +
                                   Rename + Delete + New library, all
                                   inline). Delete opens a modal that
                                   requires typing REALLY (paste + drag-drop
@@ -442,15 +529,21 @@ exotick/
                                   mid-edit 401 also triggers /login
                                   redirect; auto-dismiss success flash
                                   after 4s.
-        ComposeTestRun.tsx        Library picker at the top; switching
-                                  mid-compose confirms + clears the case
-                                  selection (server also rejects cross-
-                                  library composition). Sticky top
+        ComposeTestRun.tsx        Cases are grouped by module (slate
+                                  container) → section, then library-root
+                                  sections + unsectioned; ticking a section
+                                  selects its cases. Library picker at the
+                                  top; switching mid-compose confirms +
+                                  clears the case selection (server also
+                                  rejects cross-library composition). Sticky top
                                   panel (Run + Runner); runner field is
                                   a dropdown from /api/users/roster
                                   (any authed user); per-case picker
                                   with TriCheckbox.
-        ActiveTestRun.tsx         Split layout; role/ownership-driven UI:
+        ActiveTestRun.tsx         Items grouped module → section (via
+                                  buildModuleBlocks); module blocks wrap
+                                  their section cards in a slate container.
+                                  Split layout; role/ownership-driven UI:
                                   hides Pass/Fail + Finish for watchers
                                   and non-owners; static status pills for
                                   watchers; amber banner + Take over
@@ -463,10 +556,12 @@ exotick/
                                   filter dropdown (shown only when
                                   multiple libraries exist).
         HistoryDetail.tsx         Header shows library_name alongside
-                                  run title. Summary + Contributors chip
-                                  list from items.updated_by; Delete Run
-                                  role-gated (editor+); plain confirm
-                                  modal; export PDF link.
+                                  run title. Results grouped module → section
+                                  (via buildModuleBlocks). Summary +
+                                  Contributors chip list from
+                                  items.updated_by; Delete Run role-gated
+                                  (editor+); plain confirm modal; export PDF
+                                  link.
         Settings.tsx              Change my password (all users), Active
                                   sessions (all users), Branding (admin),
                                   Users (admin, self filtered out).
@@ -491,13 +586,33 @@ libraries
   order_index    INTEGER NOT NULL DEFAULT 0
   created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 
-sections
+modules                        OPTIONAL "big section" container inside a
+                               library, one level above sections. A module
+                               groups sections + unsectioned cases; content
+                               with module_id NULL sits at the library root
+                               exactly as before modules existed (the layer
+                               is additive, never mandatory). Deleting a
+                               library cascades its modules.
   id             INTEGER PK AUTOINCREMENT
   name           TEXT NOT NULL
   order_index    INTEGER NOT NULL DEFAULT 0
+  library_id     INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+
+sections
+  id             INTEGER PK AUTOINCREMENT
+  name           TEXT NOT NULL
+  order_index    INTEGER NOT NULL DEFAULT 0    scoped to the (library, module)
+                                                bucket — sections in a module
+                                                order independently of root
   color          TEXT                          NULL, or one of red/orange/
                                                 yellow/green/blue/purple
   library_id     INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE
+  module_id      INTEGER REFERENCES modules(id) ON DELETE SET NULL
+                                                NULL = library root (no module).
+                                                Deleting a module frees its
+                                                sections to the root, it does
+                                                not delete them.
   created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 
 test_cases
@@ -507,6 +622,13 @@ test_cases
   notes          TEXT                          markdown; may embed /uploads/*
   order_index    INTEGER NOT NULL DEFAULT 0
   library_id     INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE
+  module_id      INTEGER REFERENCES modules(id) ON DELETE SET NULL
+                                                NULL = library root. INVARIANT
+                                                (app-enforced, like library_id):
+                                                a sectioned case's module_id
+                                                always equals its section's
+                                                module_id. Unsectioned cases
+                                                carry their own module_id.
   created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 
 test_runs
@@ -532,6 +654,10 @@ test_run_items
   snapshot_description     TEXT NOT NULL       copied at compose time
   snapshot_notes           TEXT                copied at compose time
   snapshot_section_name    TEXT                copied at compose time
+  snapshot_module_name     TEXT                copied at compose time; NULL if
+                                                the case was not in a module.
+                                                Run views + PDFs group by
+                                                module → section using it.
   order_index              INTEGER NOT NULL DEFAULT 0
   status                   TEXT CHECK(status IN ('pass','fail','skip'))
                                                 NULL until marked
@@ -617,6 +743,9 @@ Indexes:
   idx_sections_library_id      ON sections(library_id)
   idx_test_cases_library_id    ON test_cases(library_id)
   idx_test_runs_library_id     ON test_runs(library_id)
+  idx_modules_library_id       ON modules(library_id)
+  idx_sections_module_id       ON sections(module_id)
+  idx_test_cases_module_id     ON test_cases(module_id)
   idx_event_log_created_at     ON event_log(created_at)
   idx_event_log_test_run_id    ON event_log(test_run_id)
 
@@ -646,6 +775,17 @@ Migrations (all idempotent, run on server start):
   ALTER TABLE ADD COLUMN with NOT NULL DEFAULT populates every existing
   row with the default value, so all legacy sections/cases/runs land in
   library id = <DEFAULT_LIBRARY_ID> (i.e. "Main") on first boot.
+
+  Modules migration (idempotent, runs on every start):
+    CREATE TABLE IF NOT EXISTS modules (…) + idx_modules_library_id
+    ALTER TABLE sections   ADD COLUMN module_id INTEGER REFERENCES modules(id)
+                           ON DELETE SET NULL        (only if missing)
+    ALTER TABLE test_cases ADD COLUMN module_id INTEGER REFERENCES modules(id)
+                           ON DELETE SET NULL        (only if missing)
+    ALTER TABLE test_run_items ADD COLUMN snapshot_module_name TEXT
+    CREATE INDEX idx_sections_module_id / idx_test_cases_module_id
+  module_id is NULLABLE with no default, so every legacy section/case comes
+  back as module_id = NULL (library root) and renders identically to before.
 
 
 ================================================================================
@@ -815,7 +955,10 @@ libraries            GET /                            (none — any authed)
                      DELETE /:id                      + refuses when a run
                                                       references the library
                                                       OR when it's the last
-sections             GET /?library_id=N               (none — any authed)
+modules              GET /?library_id=N               requireRole('runner')
+                     everything else                  requireRole('editor')
+sections             GET /?library_id=N               requireRole('runner')
+                     move-module                      requireRole('editor')
                      everything else                  requireRole('editor')
 testCases            everything                       requireRole('editor')
 testRuns             GET /                            (none)
@@ -993,6 +1136,25 @@ Graceful shutdown:
   test_run_items survive via ON DELETE SET NULL.
   Import guardrails: 100 MB uploaded, 2000 entries, 25 MB per entry, 500 MB
   total inflated — beyond that the archive is rejected.
+  Backup format is now VERSION 4: backup.json carries a `modules` array
+  ([{ name, order_index, sections[], unsectioned[] }]) alongside the root
+  `sections` / `unsectioned`. v1-v3 (no modules) still import — their content
+  lands at the library root. Import always creates modules as NEW rows
+  (append), matching merge's additive semantics; replace deletes the target
+  library's cases → sections → modules before restoring.
+
+- Modules are the OPTIONAL "big section" layer: library → module → section →
+  case. module_id is NULLABLE on sections + test_cases (NULL = library root),
+  mirroring the library_id design — a legacy DB upgrades with every row at
+  module_id NULL and looks unchanged until someone creates a module. The
+  invariant (enforced in the route layer, exactly like library_id): a
+  sectioned case's module_id always equals its section's module_id; only
+  unsectioned cases carry an independent module_id. Deleting a module frees
+  its contents to the root (ON DELETE SET NULL), it does not delete them.
+  Compose orders items module → section → case and snapshots
+  snapshot_module_name; the run views (ActiveTestRun, HistoryDetail) and both
+  PDFs reconstruct the module → section grouping from that snapshot in a
+  single ordered pass (client helper: client/src/util/runGroups.ts).
 
 - POST /api/samples/load ALWAYS creates a new library called "Samples"
   (or "Samples (2)" if that name is taken). Never modifies existing

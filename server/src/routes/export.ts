@@ -33,12 +33,19 @@ router.get('/test-cases', requireRole('runner'), (req, res) => {
   const idSet = idList.length ? new Set(idList) : null;
   const keep = (cases: any[]) => (idSet ? cases.filter((c) => idSet.has(c.id)) : cases);
 
-  const sections = db.prepare(
+  const allSections = db.prepare(
     'SELECT * FROM sections WHERE library_id = ? ORDER BY order_index, id'
   ).all(libraryId) as any[];
-  const unsectioned = keep(db.prepare(
-    'SELECT * FROM test_cases WHERE library_id = ? AND section_id IS NULL ORDER BY order_index, id'
-  ).all(libraryId) as any[]);
+  const caseStmt = db.prepare('SELECT * FROM test_cases WHERE section_id = ? ORDER BY order_index, id');
+  const casesForSection = new Map<number, any[]>();
+  for (const s of allSections) casesForSection.set(s.id, keep(caseStmt.all(s.id) as any[]));
+  const unsecFor = (moduleId: number | null): any[] => keep(db.prepare(
+    'SELECT * FROM test_cases WHERE library_id = ? AND module_id IS ? AND section_id IS NULL ORDER BY order_index, id'
+  ).all(libraryId, moduleId) as any[]);
+
+  const modules = db.prepare(
+    'SELECT * FROM modules WHERE library_id = ? ORDER BY order_index, id'
+  ).all(libraryId) as any[];
 
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'application/pdf');
@@ -56,29 +63,42 @@ router.get('/test-cases', requireRole('runner'), (req, res) => {
   doc.fillColor('black');
   doc.moveDown(1.5);
 
-  for (const section of sections) {
-    const cases = keep(db.prepare(
-      'SELECT * FROM test_cases WHERE section_id = ? ORDER BY order_index, id'
-    ).all(section.id) as any[]);
-    if (cases.length === 0) continue;
-
-    doc.fontSize(13).font(FONT.bold).text(section.name);
+  const renderSection = (section: any, indent: number) => {
+    const cases = casesForSection.get(section.id) ?? [];
+    if (cases.length === 0) return;
+    doc.fontSize(13).font(FONT.bold).text(section.name, { indent });
     doc.moveDown(0.3);
-
     for (let i = 0; i < cases.length; i++) {
-      doc.fontSize(11).font(FONT.regular).text(`${i + 1}.  ${cases[i].description}`, { indent: 12 });
+      doc.fontSize(11).font(FONT.regular).text(`${i + 1}.  ${cases[i].description}`, { indent: indent + 12 });
     }
-
     doc.moveDown(0.8);
+  };
+  const renderUnsectioned = (cases: any[], indent: number, label = 'Unsectioned') => {
+    if (cases.length === 0) return;
+    doc.fontSize(13).font(FONT.bold).text(label, { indent });
+    doc.moveDown(0.3);
+    for (let i = 0; i < cases.length; i++) {
+      doc.fontSize(11).font(FONT.regular).text(`${i + 1}.  ${cases[i].description}`, { indent: indent + 12 });
+    }
+    doc.moveDown(0.8);
+  };
+
+  // Modules first (each a top-level heading), then library-root content.
+  for (const m of modules) {
+    const moduleSections = allSections.filter((s) => s.module_id === m.id);
+    const moduleUnsec = unsecFor(m.id);
+    const hasContent = moduleUnsec.length > 0 || moduleSections.some((s) => (casesForSection.get(s.id) ?? []).length > 0);
+    if (!hasContent) continue;
+    doc.fontSize(15).font(FONT.bold).fillColor('#1e293b').text(m.name.toUpperCase());
+    doc.fillColor('black');
+    doc.moveDown(0.4);
+    for (const s of moduleSections) renderSection(s, 16);
+    renderUnsectioned(moduleUnsec, 16);
+    doc.moveDown(0.4);
   }
 
-  if (unsectioned.length > 0) {
-    doc.fontSize(13).font(FONT.bold).text('Unsectioned');
-    doc.moveDown(0.3);
-    for (let i = 0; i < unsectioned.length; i++) {
-      doc.fontSize(11).font(FONT.regular).text(`${i + 1}.  ${unsectioned[i].description}`, { indent: 12 });
-    }
-  }
+  for (const s of allSections.filter((sec) => sec.module_id == null)) renderSection(s, 0);
+  renderUnsectioned(unsecFor(null), 0);
 
   doc.end();
 });
@@ -147,29 +167,38 @@ router.get('/test-runs/:id', (req, res) => {
     doc.moveDown(1);
   }
 
-  // Group by section
-  const sectionMap = new Map<string, any[]>();
+  // Group by module → section. Items arrive in compose order (module, then
+  // section, then case), so walking them in order and printing a heading
+  // whenever the module or section name changes preserves that grouping.
+  let currentModule: string | null | undefined = undefined;
+  let currentSection: string | null | undefined = undefined;
   for (const item of items) {
-    const key = item.snapshot_section_name || 'Unsectioned';
-    if (!sectionMap.has(key)) sectionMap.set(key, []);
-    sectionMap.get(key)!.push(item);
-  }
-
-  for (const [sectionName, sectionItems] of sectionMap) {
-    doc.fontSize(13).font(FONT.bold).text(sectionName);
-    doc.moveDown(0.3);
-
-    for (const item of sectionItems) {
-      const label =
-        item.status === 'pass' ? '[PASS]' :
-        item.status === 'fail' ? '[FAIL]' :
-        item.status === 'skip' ? '[SKIP]' : '[----]';
-
-      doc.fontSize(11).font(FONT.bold).text(label, { continued: true });
-      doc.font(FONT.regular).text(`  ${item.snapshot_description}`);
+    const moduleName: string | null = item.snapshot_module_name ?? null;
+    const sectionName = item.snapshot_section_name || 'Unsectioned';
+    if (moduleName !== currentModule) {
+      currentModule = moduleName;
+      currentSection = undefined; // force the section heading to reprint under the new module
+      if (moduleName) {
+        doc.moveDown(0.2);
+        doc.fontSize(15).font(FONT.bold).fillColor('#1e293b').text(moduleName.toUpperCase());
+        doc.fillColor('black');
+        doc.moveDown(0.3);
+      }
+    }
+    if (sectionName !== currentSection) {
+      currentSection = sectionName;
+      const indent = moduleName ? 16 : 0;
+      doc.fontSize(13).font(FONT.bold).text(sectionName, { indent });
+      doc.moveDown(0.3);
     }
 
-    doc.moveDown(0.8);
+    const indent = moduleName ? 16 : 0;
+    const label =
+      item.status === 'pass' ? '[PASS]' :
+      item.status === 'fail' ? '[FAIL]' :
+      item.status === 'skip' ? '[SKIP]' : '[----]';
+    doc.fontSize(11).font(FONT.bold).text(label, { continued: true, indent });
+    doc.font(FONT.regular).text(`  ${item.snapshot_description}`);
   }
 
   doc.end();

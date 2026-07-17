@@ -8,7 +8,8 @@
     "bootstrap": "tsx src/bootstrap-cli.ts",
     "reset-admin": "tsx src/reset-admin-cli.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "node --import tsx --test test/**/*.test.ts"
   },
   "dependencies": {
     "@types/multer": "^2.1.0",

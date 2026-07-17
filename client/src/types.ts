@@ -5,6 +5,8 @@ export interface Section {
   name: string;
   order_index: number;
   color: SectionColor | null;
+  // Module the section lives in; null = library root (no module).
+  module_id: number | null;
   test_cases: TestCase[];
 }
 
@@ -14,6 +16,36 @@ export interface TestCase {
   description: string;
   notes: string | null;
   order_index: number;
+  // Module the case lives in; null = library root. For a sectioned case this
+  // always mirrors its section's module_id (server-enforced invariant).
+  module_id: number | null;
+}
+
+// A module is an optional container inside a library that groups sections +
+// unsectioned cases. Nested shape as returned by GET /api/sections.
+export interface Module {
+  id: number;
+  name: string;
+  order_index: number;
+  sections: Section[];
+  unsectioned: TestCase[];
+}
+
+// Full content tree of one library. `modules` come first; `sections` /
+// `unsectioned` are the library-root content that sits outside any module.
+export interface LibraryContent {
+  modules: Module[];
+  sections: Section[];
+  unsectioned: TestCase[];
+}
+
+// Flat module row (GET /api/modules, POST /api/modules).
+export interface ModuleSummary {
+  id: number;
+  name: string;
+  order_index: number;
+  library_id: number;
+  created_at: string;
 }
 
 export interface Library {
@@ -51,6 +83,8 @@ export interface TestRunItem {
   snapshot_description: string;
   snapshot_notes: string | null;
   snapshot_section_name: string | null;
+  // Module the case belonged to at compose time; null = library root.
+  snapshot_module_name: string | null;
   order_index: number;
   status: 'pass' | 'fail' | 'skip' | null;
   // Username of whoever last marked this item. `updated_at` used to live

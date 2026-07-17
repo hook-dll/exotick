@@ -73,3 +73,10 @@ export function libraryForCase(caseId: number | string): { id: number; name: str
   ).get(caseId) as any;
   return row ? { id: row.id, name: row.name } : null;
 }
+
+export function libraryForModule(moduleId: number | string): { id: number; name: string } | null {
+  const row = db.prepare(
+    'SELECT l.id, l.name FROM modules m JOIN libraries l ON l.id = m.library_id WHERE m.id = ?'
+  ).get(moduleId) as any;
+  return row ? { id: row.id, name: row.name } : null;
+}

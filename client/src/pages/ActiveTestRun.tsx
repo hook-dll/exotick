@@ -7,6 +7,7 @@ import TakeOverDialog from '../components/TakeOverDialog';
 import Action from '../iconmode/Action';
 import { useAuth } from '../auth/AuthContext';
 import type { SectionColor, TestRunItem, TestRunWithItems } from '../types';
+import { buildModuleBlocks } from '../util/runGroups';
 
 // Two-side cannon burst that lasts ~1.5s. The canvas that canvas-confetti
 // attaches lives on document.body, so it survives the client-side
@@ -144,12 +145,11 @@ export default function ActiveTestRun() {
   const failed = run.items.filter((i) => i.status === 'fail').length;
   const marked = passed + failed;
 
-  const groups = new Map<string, TestRunItem[]>();
-  for (const item of run.items) {
-    const key = item.snapshot_section_name ?? 'Unsectioned';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(item);
-  }
+  // Group into module blocks → sections, preserving compose order (items
+  // arrive ordered module → section → case, so each module/section run is
+  // contiguous). moduleName null = library-root content (rendered without a
+  // module wrapper), exactly as before modules existed.
+  const blocks = buildModuleBlocks(run.items);
 
   // Banner only for editor+/runner non-owners. Watchers/admin see a silent
   // read-only run.
@@ -242,69 +242,80 @@ export default function ActiveTestRun() {
           </div>
         </div>
 
-        {/* Test cases */}
+        {/* Test cases — grouped by module → section */}
         <div className="space-y-3">
-          {[...groups.entries()].map(([sectionName, items]) => {
-            const color = colorByName.get(sectionName) ?? null;
-            const tintClass = color ? ` section-tint-${color}` : '';
+          {blocks.map((block, bi) => {
+            const sectionCards = block.sections.map(({ sectionName, items }) => {
+              const color = colorByName.get(sectionName) ?? null;
+              const tintClass = color ? ` section-tint-${color}` : '';
+              return (
+              <div key={sectionName} className="bg-white border rounded-lg overflow-hidden">
+                <div className={`px-4 py-2 border-b text-sm font-semibold text-gray-700${tintClass}`}>
+                  {sectionName}
+                </div>
+                <div className="divide-y">
+                  {items.map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => setSelectedItem(item)}
+                      className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
+                        selectedItem?.id === item.id ? 'ring-2 ring-inset ring-blue-400' : ''
+                      } ${
+                        item.status === 'pass'
+                          ? 'bg-green-50'
+                          : item.status === 'fail'
+                          ? 'bg-red-50'
+                          : ''
+                      }`}
+                    >
+                      <span className="flex-1 text-sm text-gray-700 select-none">{item.snapshot_description}</span>
+                      {canMark ? (
+                        <div className="flex gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => handleItemClick(item, 'pass')}
+                            className={`px-3 py-1 rounded text-sm font-medium border transition-colors ${
+                              item.status === 'pass'
+                                ? 'bg-green-600 text-white border-green-600'
+                                : 'border-green-500 text-green-600 hover:bg-green-50'
+                            }`}
+                          >
+                            <Action icon="check">Pass</Action>
+                          </button>
+                          <button
+                            onClick={() => handleItemClick(item, 'fail')}
+                            className={`px-3 py-1 rounded text-sm font-medium border transition-colors ${
+                              item.status === 'fail'
+                                ? 'bg-red-600 text-white border-red-600'
+                                : 'border-red-400 text-red-500 hover:bg-red-50'
+                            }`}
+                          >
+                            <Action icon="x">Fail</Action>
+                          </button>
+                        </div>
+                      ) : (
+                        // Non-owner / watcher view: static status pill instead of Pass/Fail buttons.
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${
+                          item.status === 'pass' ? 'bg-green-100 text-green-700'
+                          : item.status === 'fail' ? 'bg-red-100 text-red-700'
+                          : 'bg-gray-100 text-gray-400'
+                        }`}>
+                          {item.status ? item.status.toUpperCase() : '—'}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              );
+            });
+
+            // Library-root content renders without a module wrapper.
+            if (block.moduleName === null) return <div key={`root-${bi}`} className="space-y-3">{sectionCards}</div>;
             return (
-            <div key={sectionName} className="bg-white border rounded-lg overflow-hidden">
-              <div className={`px-4 py-2 border-b text-sm font-semibold text-gray-700${tintClass}`}>
-                {sectionName}
+              <div key={`mod-${bi}`} className="module-shell overflow-hidden">
+                <div className="module-header px-4 py-2.5 text-sm font-bold tracking-wide">{block.moduleName}</div>
+                <div className="p-3 space-y-3">{sectionCards}</div>
               </div>
-              <div className="divide-y">
-                {items.map((item) => (
-                  <div
-                    key={item.id}
-                    onClick={() => setSelectedItem(item)}
-                    className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
-                      selectedItem?.id === item.id ? 'ring-2 ring-inset ring-blue-400' : ''
-                    } ${
-                      item.status === 'pass'
-                        ? 'bg-green-50'
-                        : item.status === 'fail'
-                        ? 'bg-red-50'
-                        : ''
-                    }`}
-                  >
-                    <span className="flex-1 text-sm text-gray-700 select-none">{item.snapshot_description}</span>
-                    {canMark ? (
-                      <div className="flex gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => handleItemClick(item, 'pass')}
-                          className={`px-3 py-1 rounded text-sm font-medium border transition-colors ${
-                            item.status === 'pass'
-                              ? 'bg-green-600 text-white border-green-600'
-                              : 'border-green-500 text-green-600 hover:bg-green-50'
-                          }`}
-                        >
-                          <Action icon="check">Pass</Action>
-                        </button>
-                        <button
-                          onClick={() => handleItemClick(item, 'fail')}
-                          className={`px-3 py-1 rounded text-sm font-medium border transition-colors ${
-                            item.status === 'fail'
-                              ? 'bg-red-600 text-white border-red-600'
-                              : 'border-red-400 text-red-500 hover:bg-red-50'
-                          }`}
-                        >
-                          <Action icon="x">Fail</Action>
-                        </button>
-                      </div>
-                    ) : (
-                      // Non-owner / watcher view: static status pill instead of Pass/Fail buttons.
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${
-                        item.status === 'pass' ? 'bg-green-100 text-green-700'
-                        : item.status === 'fail' ? 'bg-red-100 text-red-700'
-                        : 'bg-gray-100 text-gray-400'
-                      }`}>
-                        {item.status ? item.status.toUpperCase() : '—'}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
             );
           })}
         </div>

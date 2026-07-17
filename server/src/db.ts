@@ -152,6 +152,10 @@ if (!triCols.includes('snapshot_notes')) db.exec('ALTER TABLE test_run_items ADD
 // Records the username of whoever last marked/skipped this item. Null only
 // on rows written before the column existed.
 if (!triCols.includes('updated_by')) db.exec('ALTER TABLE test_run_items ADD COLUMN updated_by TEXT');
+// Module the case belonged to at compose time (parallel to snapshot_section_name).
+// Null = the case was not inside any module (library root). Run views + PDFs
+// group items by module → section using this snapshot.
+if (!triCols.includes('snapshot_module_name')) db.exec('ALTER TABLE test_run_items ADD COLUMN snapshot_module_name TEXT');
 
 const secCols = (db.prepare('PRAGMA table_info(sections)').all() as any[]).map((c) => c.name);
 if (!secCols.includes('color')) db.exec('ALTER TABLE sections ADD COLUMN color TEXT');
@@ -215,6 +219,42 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sections_library_id  ON sections(library_id);
   CREATE INDEX IF NOT EXISTS idx_test_cases_library_id ON test_cases(library_id);
   CREATE INDEX IF NOT EXISTS idx_test_runs_library_id  ON test_runs(library_id);
+`);
+
+// ── modules migration ──────────────────────────────────────────────────
+// A module is an OPTIONAL grouping container that lives inside a library and
+// wraps sections + unsectioned cases. It mirrors the library_id pattern:
+// sections and test_cases each carry a NULLABLE module_id. NULL means the
+// row sits at the library root (no module) — exactly how every row behaved
+// before this feature, so legacy databases need no data movement. The
+// invariant, enforced in the route layer just like library_id: a sectioned
+// case's module_id always equals its section's module_id.
+//
+// ON DELETE SET NULL: deleting a module returns its sections + cases to the
+// library root rather than destroying them — parallel to how deleting a
+// section returns its cases to the unsectioned pile.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS modules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    order_index INTEGER NOT NULL DEFAULT 0,
+    library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_modules_library_id ON modules(library_id);
+`);
+
+const secCols3 = (db.prepare('PRAGMA table_info(sections)').all() as any[]).map((c) => c.name);
+if (!secCols3.includes('module_id')) {
+  db.exec('ALTER TABLE sections ADD COLUMN module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL');
+}
+const tcCols3 = (db.prepare('PRAGMA table_info(test_cases)').all() as any[]).map((c) => c.name);
+if (!tcCols3.includes('module_id')) {
+  db.exec('ALTER TABLE test_cases ADD COLUMN module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL');
+}
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_sections_module_id  ON sections(module_id);
+  CREATE INDEX IF NOT EXISTS idx_test_cases_module_id ON test_cases(module_id);
 `);
 
 export function transaction<T>(fn: () => T): T {

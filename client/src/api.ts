@@ -1,6 +1,7 @@
 import type {
   Section, SectionColor, TestCase, TestRun, TestRunWithItems, TestRunItem,
   AuthMe, User, AdminUser, Role, SessionSummary, Branding, Library, LogEvent,
+  LibraryContent, ModuleSummary,
 } from './types';
 
 // Error class the login page reads for its retry-after countdown.
@@ -90,10 +91,23 @@ export const api = {
     reorder: (ids: number[]) => req<void>('PUT', '/libraries/reorder', { ids }),
   },
 
-  sections: {
+  modules: {
     list: (library_id: number) =>
-      req<{ sections: Section[]; unsectioned: TestCase[] }>('GET', `/sections?library_id=${library_id}`),
+      req<{ modules: ModuleSummary[] }>('GET', `/modules?library_id=${library_id}`),
     create: (name: string, library_id: number, opts?: { after_id?: number | null }) =>
+      req<ModuleSummary>('POST', '/modules', { name, library_id, ...(opts ?? {}) }),
+    rename: (id: number, name: string) => req<ModuleSummary>('PUT', `/modules/${id}`, { name }),
+    delete: (id: number) => req<void>('DELETE', `/modules/${id}`),
+    reorder: (ids: number[], library_id: number) =>
+      req<void>('PUT', '/modules/reorder', { ids, library_id }),
+  },
+
+  sections: {
+    // Returns the library's full tree: modules first, then library-root
+    // sections + unsectioned cases (module_id null).
+    list: (library_id: number) =>
+      req<LibraryContent>('GET', `/sections?library_id=${library_id}`),
+    create: (name: string, library_id: number, opts?: { after_id?: number | null; module_id?: number | null }) =>
       req<Section>('POST', '/sections', { name, library_id, ...(opts ?? {}) }),
     update: (id: number, data: { name?: string; color?: SectionColor | null }) =>
       req<Section>('PUT', `/sections/${id}`, data),
@@ -104,30 +118,36 @@ export const api = {
       req<{ ok: boolean; deleted: number }>('POST', '/sections/bulk-delete', { ids }),
     merge: (source_ids: number[], target_id: number) =>
       req<{ ok: boolean; movedCases: number; mergedSections: number }>('POST', '/sections/merge', { source_ids, target_id }),
+    // Move whole sections (with their cases) into a module, or to the library
+    // root (module_id null).
+    moveModule: (ids: number[], library_id: number, module_id: number | null) =>
+      req<{ ok: boolean; moved: number }>('POST', '/sections/move-module', { ids, library_id, module_id }),
   },
 
   testCases: {
-    create: (data: { section_id?: number | null; description: string; notes?: string | null; library_id: number }) =>
+    create: (data: { section_id?: number | null; description: string; notes?: string | null; library_id: number; module_id?: number | null }) =>
       req<TestCase>('POST', '/test-cases', data),
     update: (id: number, data: { description: string; section_id?: number | null; notes?: string | null }) =>
       req<TestCase>('PUT', `/test-cases/${id}`, data),
     delete: (id: number) => req<void>('DELETE', `/test-cases/${id}`),
     reorder: (ids: number[], library_id: number) =>
       req<void>('PATCH', '/test-cases/reorder', { ids, library_id }),
-    bulkCreate: (section_id: number | null, descriptions: string[], library_id: number) =>
-      req<{ created: number; cases: TestCase[] }>('POST', '/test-cases/bulk', { section_id, descriptions, library_id }),
-    bulkMove: (ids: number[], section_id: number | null, library_id: number) =>
-      req<{ ok: boolean; moved: number }>('PATCH', '/test-cases/bulk-move', { ids, section_id, library_id }),
+    bulkCreate: (section_id: number | null, descriptions: string[], library_id: number, module_id?: number | null) =>
+      req<{ created: number; cases: TestCase[] }>('POST', '/test-cases/bulk', { section_id, descriptions, library_id, module_id }),
+    // Move to a section (module derived) or to a module's unsectioned pile
+    // (section_id null + module_id; null module_id = library root).
+    bulkMove: (ids: number[], section_id: number | null, library_id: number, module_id?: number | null) =>
+      req<{ ok: boolean; moved: number }>('PATCH', '/test-cases/bulk-move', { ids, section_id, library_id, module_id }),
     bulkDelete: (ids: number[]) =>
       req<{ ok: boolean; deleted: number }>('POST', '/test-cases/bulk-delete', { ids }),
     bulkDuplicate: (ids: number[]) =>
       req<{ created: number; cases: TestCase[] }>('POST', '/test-cases/bulk-duplicate', { ids }),
-    // Copy selected cases + their sections (by name+color) into ANOTHER
-    // library, non-destructively. section_ids covers empty sections selected
-    // on their own.
-    bulkCopy: (target_library_id: number, case_ids: number[], section_ids: number[]) =>
-      req<{ ok: boolean; copiedCases: number; sectionsCreated: number; library: Library }>(
-        'POST', '/test-cases/bulk-copy', { target_library_id, case_ids, section_ids }),
+    // Copy selected modules + sections + cases into ANOTHER library, non-
+    // destructively. Structure (modules by name, sections by name+color within
+    // their module) is recreated in the target.
+    bulkCopy: (target_library_id: number, case_ids: number[], section_ids: number[], module_ids: number[]) =>
+      req<{ ok: boolean; copiedCases: number; sectionsCreated: number; modulesCreated: number; library: Library }>(
+        'POST', '/test-cases/bulk-copy', { target_library_id, case_ids, section_ids, module_ids }),
   },
 
   testRuns: {

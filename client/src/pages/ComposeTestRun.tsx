@@ -6,7 +6,7 @@ import LibraryPicker from '../library/LibraryPicker';
 import Action from '../iconmode/Action';
 import { useAuth } from '../auth/AuthContext';
 import { useLibrary } from '../library/LibraryContext';
-import type { Section, TestCase } from '../types';
+import type { Module, Section, TestCase } from '../types';
 
 function TriCheckbox({
   checked, indeterminate, onChange, title, className,
@@ -33,6 +33,7 @@ export default function ComposeTestRun() {
   const { activeLibrary, activeLibraryId, setActiveLibrary, isLoading: librariesLoading } = useLibrary();
   const canEditCases = user?.role === 'admin' || user?.role === 'editor';
   const canCompose = user?.role === 'editor' || user?.role === 'runner';
+  const [modules, setModules] = useState<Module[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [unsectioned, setUnsectioned] = useState<TestCase[]>([]);
   const [name, setName] = useState('');
@@ -51,7 +52,8 @@ export default function ComposeTestRun() {
     setLoading(true);
     setSelectedCases(new Set());
     setSelectedId(null);
-    api.sections.list(activeLibraryId).then(({ sections: s, unsectioned: u }) => {
+    api.sections.list(activeLibraryId).then(({ modules: m, sections: s, unsectioned: u }) => {
+      setModules(m);
       setSections(s);
       setUnsectioned(u);
       setLoading(false);
@@ -137,17 +139,21 @@ export default function ComposeTestRun() {
     );
   }
 
+  // Flattened views across modules + root, for totals and the preview lookup.
+  const allSections = [...modules.flatMap((m) => m.sections), ...sections];
+  const allUnsectioned = [...modules.flatMap((m) => m.unsectioned), ...unsectioned];
+
   const totalSelected = selectedCases.size;
   const totalAvailable =
-    sections.reduce((sum, s) => sum + s.test_cases.length, 0) + unsectioned.length;
+    allSections.reduce((sum, s) => sum + s.test_cases.length, 0) + allUnsectioned.length;
 
   const selected = (() => {
     if (selectedId == null) return null;
-    for (const s of sections) {
+    for (const s of allSections) {
       const tc = s.test_cases.find((c) => c.id === selectedId);
       if (tc) return { tc, sectionName: s.name };
     }
-    const u = unsectioned.find((c) => c.id === selectedId);
+    const u = allUnsectioned.find((c) => c.id === selectedId);
     return u ? { tc: u, sectionName: 'Unsectioned' } : null;
   })();
 
@@ -180,6 +186,56 @@ export default function ComposeTestRun() {
       </button>
     </div>
   );
+
+  const renderSectionCard = (section: Section) => {
+    const caseIds = section.test_cases.map((c) => c.id);
+    const allSelected = caseIds.length > 0 && caseIds.every((id) => selectedCases.has(id));
+    const someSelected = caseIds.some((id) => selectedCases.has(id));
+    const inSection = caseIds.filter((id) => selectedCases.has(id)).length;
+    const tintClass = section.color ? ` section-tint-${section.color}` : '';
+    return (
+      <div key={section.id} className="bg-white border rounded-lg overflow-hidden">
+        <div className={`flex items-center gap-2 px-4 py-3 border-b${tintClass}`}>
+          <TriCheckbox
+            checked={allSelected}
+            indeterminate={someSelected}
+            onChange={() => toggleAllIn(section.test_cases)}
+            title="Select all cases in section"
+            className="shrink-0"
+          />
+          <span className="flex-1 font-semibold text-gray-800">{section.name}</span>
+          <span className="text-xs text-gray-400">{inSection}/{caseIds.length}</span>
+        </div>
+        {section.test_cases.length > 0 && (
+          <div className="px-4 py-3">{section.test_cases.map(renderCaseRow)}</div>
+        )}
+      </div>
+    );
+  };
+
+  const renderUnsecCard = (cases: TestCase[], key: string) => {
+    if (cases.length === 0) return null;
+    const uIds = cases.map((c) => c.id);
+    const uAll = uIds.length > 0 && uIds.every((id) => selectedCases.has(id));
+    const uSome = uIds.some((id) => selectedCases.has(id));
+    const uInSel = uIds.filter((id) => selectedCases.has(id)).length;
+    return (
+      <div key={key} className="bg-white border rounded-lg overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b">
+          <TriCheckbox
+            checked={uAll}
+            indeterminate={uSome}
+            onChange={() => toggleAllIn(cases)}
+            title="Select all unsectioned cases"
+            className="shrink-0"
+          />
+          <span className="flex-1 font-semibold text-gray-400">Unsectioned</span>
+          <span className="text-xs text-gray-300">{uInSel}/{uIds.length}</span>
+        </div>
+        <div className="px-4 py-3">{cases.map(renderCaseRow)}</div>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -248,7 +304,7 @@ export default function ComposeTestRun() {
           </div>
         </div>
 
-        {sections.length === 0 && unsectioned.length === 0 ? (
+        {modules.length === 0 && sections.length === 0 && unsectioned.length === 0 ? (
           <div className="bg-white border rounded-lg p-6 text-center text-gray-400 text-sm">
             {canEditCases ? (
               <>
@@ -261,62 +317,17 @@ export default function ComposeTestRun() {
           </div>
         ) : (
           <div className="space-y-3">
-            {sections.map((section) => {
-              const caseIds = section.test_cases.map((c) => c.id);
-              const allSelected = caseIds.length > 0 && caseIds.every((id) => selectedCases.has(id));
-              const someSelected = caseIds.some((id) => selectedCases.has(id));
-              const inSection = caseIds.filter((id) => selectedCases.has(id)).length;
-              const tintClass = section.color ? ` section-tint-${section.color}` : '';
-              return (
-                <div key={section.id} className="bg-white border rounded-lg overflow-hidden">
-                  <div className={`flex items-center gap-2 px-4 py-3 border-b${tintClass}`}>
-                    <TriCheckbox
-                      checked={allSelected}
-                      indeterminate={someSelected}
-                      onChange={() => toggleAllIn(section.test_cases)}
-                      title="Select all cases in section"
-                      className="shrink-0"
-                    />
-                    <span className="flex-1 font-semibold text-gray-800">{section.name}</span>
-                    <span className="text-xs text-gray-400">
-                      {inSection}/{caseIds.length}
-                    </span>
-                  </div>
-                  {section.test_cases.length > 0 && (
-                    <div className="px-4 py-3">
-                      {section.test_cases.map(renderCaseRow)}
-                    </div>
-                  )}
+            {modules.map((m) => (
+              <div key={m.id} className="module-shell overflow-hidden">
+                <div className="module-header px-4 py-2.5 text-sm font-bold tracking-wide">{m.name}</div>
+                <div className="p-3 space-y-3">
+                  {m.sections.map(renderSectionCard)}
+                  {renderUnsecCard(m.unsectioned, `mu-${m.id}`)}
                 </div>
-              );
-            })}
-
-            {unsectioned.length > 0 && (() => {
-              const uIds = unsectioned.map((c) => c.id);
-              const uAll = uIds.length > 0 && uIds.every((id) => selectedCases.has(id));
-              const uSome = uIds.some((id) => selectedCases.has(id));
-              const uInSel = uIds.filter((id) => selectedCases.has(id)).length;
-              return (
-                <div className="bg-white border rounded-lg overflow-hidden">
-                  <div className="flex items-center gap-2 px-4 py-3 border-b">
-                    <TriCheckbox
-                      checked={uAll}
-                      indeterminate={uSome}
-                      onChange={() => toggleAllIn(unsectioned)}
-                      title="Select all unsectioned cases"
-                      className="shrink-0"
-                    />
-                    <span className="flex-1 font-semibold text-gray-400">Unsectioned</span>
-                    <span className="text-xs text-gray-300">
-                      {uInSel}/{uIds.length}
-                    </span>
-                  </div>
-                  <div className="px-4 py-3">
-                    {unsectioned.map(renderCaseRow)}
-                  </div>
-                </div>
-              );
-            })()}
+              </div>
+            ))}
+            {sections.map(renderSectionCard)}
+            {renderUnsecCard(unsectioned, 'root-unsec')}
           </div>
         )}
 

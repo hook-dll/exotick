@@ -6,6 +6,7 @@ import Action from '../iconmode/Action';
 import { formatServerTs } from '../util/serverDate';
 import { useAuth } from '../auth/AuthContext';
 import type { SectionColor, TestRunItem, TestRunWithItems } from '../types';
+import { buildModuleBlocks } from '../util/runGroups';
 
 function StatusBadge({ status }: { status: TestRunItem['status'] }) {
   switch (status) {
@@ -90,12 +91,7 @@ export default function HistoryDetail() {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   })();
 
-  const groups = new Map<string, TestRunItem[]>();
-  for (const item of run.items) {
-    const key = item.snapshot_section_name ?? 'Unsectioned';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(item);
-  }
+  const blocks = buildModuleBlocks(run.items);
 
   return (
     <>
@@ -215,31 +211,40 @@ export default function HistoryDetail() {
           </div>
         </div>
 
-        {/* Results by section */}
+        {/* Results by module → section */}
         <div className="space-y-3">
-          {[...groups.entries()].map(([sectionName, items]) => {
-            const color = colorByName.get(sectionName) ?? null;
-            const tintClass = color ? ` section-tint-${color}` : '';
+          {blocks.map((block, bi) => {
+            const sectionCards = block.sections.map(({ sectionName, items }) => {
+              const color = colorByName.get(sectionName) ?? null;
+              const tintClass = color ? ` section-tint-${color}` : '';
+              return (
+              <div key={sectionName} className="bg-white border rounded-lg overflow-hidden">
+                <div className={`px-4 py-2 border-b text-sm font-semibold text-gray-700${tintClass}`}>
+                  {sectionName}
+                </div>
+                <div className="divide-y">
+                  {items.map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => setSelectedItem(item)}
+                      className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors ${
+                        selectedItem?.id === item.id ? 'ring-2 ring-inset ring-blue-400' : ''
+                      }`}
+                    >
+                      <span className="flex-1 text-sm text-gray-700 select-none">{item.snapshot_description}</span>
+                      <StatusBadge status={item.status} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              );
+            });
+            if (block.moduleName === null) return <div key={`root-${bi}`} className="space-y-3">{sectionCards}</div>;
             return (
-            <div key={sectionName} className="bg-white border rounded-lg overflow-hidden">
-              <div className={`px-4 py-2 border-b text-sm font-semibold text-gray-700${tintClass}`}>
-                {sectionName}
+              <div key={`mod-${bi}`} className="module-shell overflow-hidden">
+                <div className="module-header px-4 py-2.5 text-sm font-bold tracking-wide">{block.moduleName}</div>
+                <div className="p-3 space-y-3">{sectionCards}</div>
               </div>
-              <div className="divide-y">
-                {items.map((item) => (
-                  <div
-                    key={item.id}
-                    onClick={() => setSelectedItem(item)}
-                    className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors ${
-                      selectedItem?.id === item.id ? 'ring-2 ring-inset ring-blue-400' : ''
-                    }`}
-                  >
-                    <span className="flex-1 text-sm text-gray-700 select-none">{item.snapshot_description}</span>
-                    <StatusBadge status={item.status} />
-                  </div>
-                ))}
-              </div>
-            </div>
             );
           })}
         </div>

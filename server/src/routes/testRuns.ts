@@ -11,7 +11,7 @@ const router = Router();
 // when the current runner last touched a case, which is surveillance of
 // another user. Callers only need updated_by (for Contributors chips).
 const ITEM_COLUMNS =
-  'id, test_run_id, test_case_id, snapshot_description, snapshot_notes, snapshot_section_name, order_index, status, updated_by';
+  'id, test_run_id, test_case_id, snapshot_description, snapshot_notes, snapshot_section_name, snapshot_module_name, order_index, status, updated_by';
 
 // Server-side SQL fragment that produces cooldown_active as 0/1 per run row.
 // Kept as an expression rather than a JS-side computation so `last_activity_at`
@@ -102,11 +102,15 @@ router.post('/', requireCanRun, (req, res) => {
     const run = transaction(() => {
       const placeholders = ids.map(() => '?').join(',');
       const cases = db.prepare(
-        `SELECT tc.id, tc.description, tc.notes, tc.library_id, s.name AS section_name
+        `SELECT tc.id, tc.description, tc.notes, tc.library_id,
+                s.name AS section_name, m.name AS module_name
          FROM test_cases tc
          LEFT JOIN sections s ON s.id = tc.section_id
+         LEFT JOIN modules m ON m.id = tc.module_id
          WHERE tc.id IN (${placeholders})
          ORDER BY
+           CASE WHEN tc.module_id IS NULL THEN 1 ELSE 0 END,
+           m.order_index, m.id,
            CASE WHEN tc.section_id IS NULL THEN 1 ELSE 0 END,
            s.order_index, s.id,
            tc.order_index, tc.id`
@@ -125,12 +129,12 @@ router.post('/', requireCanRun, (req, res) => {
 
       const insertItem = db.prepare(
         `INSERT INTO test_run_items
-         (test_run_id, test_case_id, snapshot_description, snapshot_notes, snapshot_section_name, order_index)
-         VALUES (?, ?, ?, ?, ?, ?)`
+         (test_run_id, test_case_id, snapshot_description, snapshot_notes, snapshot_section_name, snapshot_module_name, order_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       );
       let orderIndex = 0;
       for (const tc of cases) {
-        insertItem.run(runId, tc.id, tc.description, tc.notes ?? null, tc.section_name ?? null, orderIndex++);
+        insertItem.run(runId, tc.id, tc.description, tc.notes ?? null, tc.section_name ?? null, tc.module_name ?? null, orderIndex++);
       }
 
       return db.prepare(

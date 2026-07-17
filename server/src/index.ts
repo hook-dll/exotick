@@ -13,6 +13,7 @@ import authRouter from './routes/auth';
 import samplesRouter from './routes/samples';
 import usersRouter from './routes/users';
 import librariesRouter from './routes/libraries';
+import modulesRouter from './routes/modules';
 import brandingRouter, { BRANDING_DIR } from './routes/branding';
 import settingsRouter from './routes/settings';
 import logRouter from './routes/log';
@@ -79,6 +80,7 @@ app.use('/api/auth', authRouter);
 app.use('/api', requireAuth);
 
 app.use('/api/libraries', librariesRouter);
+app.use('/api/modules', modulesRouter);
 app.use('/api/sections', sectionsRouter);
 app.use('/api/test-cases', testCasesRouter);
 app.use('/api/test-runs', testRunsRouter);
