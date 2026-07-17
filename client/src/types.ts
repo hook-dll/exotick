@@ -104,4 +104,9 @@ export interface Branding {
   name: string | null;
   // URL of the custom logo image; null renders the default checkmark tile.
   logoUrl: string | null;
+  // Public demo instance? When true the server seeds a shared login and blocks
+  // password changes; the login screen surfaces the credentials below.
+  demoMode?: boolean;
+  demoUsername?: string;
+  demoPassword?: string;
 }

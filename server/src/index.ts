@@ -18,6 +18,7 @@ import settingsRouter from './routes/settings';
 import logRouter from './routes/log';
 import { requireAuth } from './auth/middleware';
 import { bootstrapAdmin, BootstrapError } from './auth/bootstrap';
+import { seedDemo } from './demo';
 import { pruneExpiredSessions } from './auth/sessions';
 
 const app = express();
@@ -142,6 +143,10 @@ async function start() {
     }
     throw e;
   }
+
+  // Opt-in demo bootstrap (env-gated, no-op unless DEMO_MODE is set). Seeds a
+  // shared public login + sample content for a public demo instance.
+  seedDemo();
 
   // Prune expired sessions on boot and hourly. Keeps the sessions table tight
   // without needing an external scheduler.

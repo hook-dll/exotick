@@ -589,6 +589,7 @@ function BrandingSection() {
 
 export default function Settings() {
   const { user } = useAuth();
+  const { demoMode } = useBranding();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usersError, setUsersError] = useState('');
 
@@ -608,7 +609,13 @@ export default function Settings() {
     <div className="max-w-3xl mx-auto space-y-4">
       <h1 className="text-2xl font-bold text-gray-800 mb-2">Settings</h1>
 
-      <ChangePasswordSection />
+      {demoMode ? (
+        <div className="rounded border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          Password changes are disabled on this demo instance.
+        </div>
+      ) : (
+        <ChangePasswordSection />
+      )}
       <ActiveSessionsSection />
       {isAdmin && (
         <>

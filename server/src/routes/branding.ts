@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import db, { DATA_DIR } from '../db';
 import { requireAuth, requireRole } from '../auth/middleware';
+import { isDemoMode, demoCredentials } from '../demo';
 
 // data/branding/ holds the currently-active custom logo. Served publicly at
 // /branding/<file> so the login page can render it before the user has a
@@ -69,9 +70,14 @@ function unlinkLogo(filename: string | null): void {
 const router = Router();
 
 // GET is intentionally public: the login screen renders the brand before
-// the user has any session.
+// the user has any session. In demo mode it also advertises the shared public
+// credentials so the login screen can surface them (they're meant to be public).
 router.get('/', (_req, res) => {
-  res.json(getBranding());
+  const demo = isDemoMode();
+  const demoInfo = demo
+    ? (() => { const { username, password } = demoCredentials(); return { demoMode: true, demoUsername: username, demoPassword: password }; })()
+    : { demoMode: false };
+  res.json({ ...getBranding(), ...demoInfo });
 });
 
 // POST is admin-only. Multer parses multipart/form-data so name arrives as

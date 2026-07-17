@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import Brand from '../branding/Brand';
+import { useBranding } from '../branding/BrandingContext';
 import { RateLimitError } from '../api';
 
 interface LocationState { from?: string }
@@ -21,6 +22,7 @@ function formatDuration(seconds: number): string {
 
 export default function Login() {
   const { user, isLoading, login } = useAuth();
+  const { demoMode, demoUsername, demoPassword } = useBranding();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -76,6 +78,23 @@ export default function Login() {
         </div>
         <h1 className="text-lg font-bold text-gray-800 mb-1">Sign in</h1>
         <p className="text-sm text-gray-500 mb-4">Enter your credentials to continue.</p>
+
+        {demoMode && demoUsername && demoPassword && (
+          <div className="mb-4 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+            <p className="font-medium">This is a live demo.</p>
+            <p className="mt-0.5">
+              Sign in with <span className="font-mono">{demoUsername}</span> /{' '}
+              <span className="font-mono">{demoPassword}</span>.
+            </p>
+            <button
+              type="button"
+              onClick={() => { setUsername(demoUsername); setPassword(demoPassword); }}
+              className="mt-2 text-blue-700 underline hover:text-blue-900"
+            >
+              Fill demo login
+            </button>
+          </div>
+        )}
 
         <div className="space-y-3">
           <div>

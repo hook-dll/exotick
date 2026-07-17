@@ -15,6 +15,7 @@ import {
 import { requireAuth } from '../auth/middleware';
 import * as rateLimit from '../auth/rateLimit';
 import { writeEvent } from '../eventLog';
+import { isDemoMode } from '../demo';
 
 const router = Router();
 
@@ -112,6 +113,13 @@ router.post('/logout', (req, res) => {
 });
 
 router.post('/change-password', requireAuth, (req, res) => {
+  // Demo instances hand out a shared login; letting anyone change its password
+  // would lock out the next visitor. The password is fixed and re-asserted on
+  // every boot (see demo.ts), so changing it is disabled outright here.
+  if (isDemoMode()) {
+    return res.status(403).json({ error: 'Password changes are disabled in the demo.' });
+  }
+
   // Rate-limit key is per-user (not per-session). A stolen session that
   // starts guessing the current password locks EVERY session for that user
   // via the same ladder as /login. Successful change resets the bucket.

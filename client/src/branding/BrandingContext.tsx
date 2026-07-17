@@ -6,6 +6,10 @@ interface BrandingContextValue {
   logoUrl: string | null;
   isLoading: boolean;
   refresh: () => Promise<void>;
+  // Public demo instance flags (see server/src/demo.ts).
+  demoMode: boolean;
+  demoUsername: string | null;
+  demoPassword: string | null;
 }
 
 const DEFAULT_NAME = 'exotick';
@@ -16,6 +20,9 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   const [name, setName] = useState<string>(DEFAULT_NAME);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [demoMode, setDemoMode] = useState(false);
+  const [demoUsername, setDemoUsername] = useState<string | null>(null);
+  const [demoPassword, setDemoPassword] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -24,9 +31,15 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
       // Add a cache-busting query so a freshly-uploaded logo replaces any
       // prior cached image without needing a hard reload.
       setLogoUrl(b.logoUrl ? `${b.logoUrl}?v=${Date.now()}` : null);
+      setDemoMode(!!b.demoMode);
+      setDemoUsername(b.demoUsername ?? null);
+      setDemoPassword(b.demoPassword ?? null);
     } catch {
       setName(DEFAULT_NAME);
       setLogoUrl(null);
+      setDemoMode(false);
+      setDemoUsername(null);
+      setDemoPassword(null);
     } finally {
       setIsLoading(false);
     }
@@ -41,7 +54,10 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     document.title = name;
   }, [name]);
 
-  const value = useMemo(() => ({ name, logoUrl, isLoading, refresh }), [name, logoUrl, isLoading, refresh]);
+  const value = useMemo(
+    () => ({ name, logoUrl, isLoading, refresh, demoMode, demoUsername, demoPassword }),
+    [name, logoUrl, isLoading, refresh, demoMode, demoUsername, demoPassword]
+  );
 
   return <BrandingContext.Provider value={value}>{children}</BrandingContext.Provider>;
 }

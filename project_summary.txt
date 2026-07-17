@@ -875,6 +875,23 @@ EXOTICK_DATA_DIR           Path to the data directory. Default:
 PORT                       Listen port. Default: 3001.
 NODE_ENV                   'production' enables Express static SPA
                            fallback for /*.
+DEMO_MODE                  Opt-in public-demo switch (1/true/yes/on).
+                           OFF by default — normal deploys/dev are
+                           unaffected. When on, seedDemo() (server/src/
+                           demo.ts, called after bootstrapAdmin on every
+                           boot) upserts a shared EDITOR account with
+                           fixed creds, seeds a Samples library if the DB
+                           has no test cases, and the app REFUSES
+                           POST /api/auth/change-password (403) so a
+                           visitor can't rotate the shared password and
+                           lock others out. GET /api/branding also returns
+                           demoMode + demoUsername + demoPassword so the
+                           login screen advertises the credentials.
+EXOTICK_DEMO_USERNAME      Demo account username. Default 'demo'.
+                           Only consulted when DEMO_MODE is on.
+EXOTICK_DEMO_PASSWORD      Demo account password. Default 'demo'.
+                           Re-asserted every boot; NOT length-checked
+                           (created directly, bypassing the ≥8 rule).
 
 Local dev: `npm run dev` runs the `predev` hook (npm run bootstrap
 --prefix server) first. If no admin exists, this prompts interactively

@@ -26,9 +26,17 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Your PRIVATE admin (owner). Not shared publicly. Render prompts for the
+      # password when you create the Blueprint (sync:false); keep it to yourself.
       - key: EXOTICK_ADMIN_USERNAME
-        value: admin
-      # Secret — not stored in the repo. Render prompts for it when you create
-      # the Blueprint (sync:false). Pick something strong.
+        value: owner
       - key: EXOTICK_ADMIN_PASSWORD
         sync: false
+      # Public demo mode: seeds a shared editor login, blocks password changes,
+      # and auto-loads sample data on boot. See server/src/demo.ts.
+      - key: DEMO_MODE
+        value: "1"
+      - key: EXOTICK_DEMO_USERNAME
+        value: demo
+      - key: EXOTICK_DEMO_PASSWORD
+        value: demo

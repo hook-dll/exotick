@@ -81,10 +81,11 @@ const SAMPLE_UNSECTIONED: SampleCase[] = [
   { description: 'Slow network shows skeleton loaders, not a blank screen' },
 ];
 
-// POST /api/samples/load — always creates a NEW library called "Samples"
-// (or "Samples (n)" if that name is taken) and seeds it. Never touches
-// existing libraries.
-router.post('/load', (_req, res) => {
+// Create a fresh "Samples" library (or "Samples (n)" if the name is taken) and
+// seed it. Never touches existing libraries. Exported so the demo bootstrap
+// (server/src/demo.ts) can populate an empty demo instance on boot without
+// going through the HTTP route.
+export function seedSamplesLibrary(): { library: unknown; sectionsAdded: number; casesAdded: number } {
   // Pick a unique library name.
   const existingNames = new Set(
     (db.prepare('SELECT name FROM libraries').all() as any[]).map((r) => r.name)
@@ -125,7 +126,14 @@ router.post('/load', (_req, res) => {
   });
 
   const library = db.prepare('SELECT id, name, order_index, created_at FROM libraries WHERE id = ?').get(libraryId);
-  res.json({ ok: true, library, sectionsAdded, casesAdded });
+  return { library, sectionsAdded, casesAdded };
+}
+
+// POST /api/samples/load — always creates a NEW library called "Samples"
+// (or "Samples (n)" if that name is taken) and seeds it. Never touches
+// existing libraries.
+router.post('/load', (_req, res) => {
+  res.json({ ok: true, ...seedSamplesLibrary() });
 });
 
 export default router;
