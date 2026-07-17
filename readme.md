@@ -14,15 +14,9 @@ One process, one SQLite file. Runs on a laptop, a LAN box, or a VPS. For small t
 
 ## Showcase
 
-**Build a library** — add cases one at a time or in bulk, and organize them into sections or leave unsectioned:
+**[▶ Try the live demo →](https://exotick.onrender.com/)** — a hosted instance seeded with sample data. Sign in with **`demo`** / **`demo`**.
 
-![Add cases and sections](docs/screens/gif-1-library.gif)
-
-**Compose & run** — select cases across sections, start the run, and mark pass/fail live:
-
-![Compose and start a run](docs/screens/gif-2-compose.gif)
-
-More screenshots — bulk edit, editing a case, branding — are in [`docs/screens`](docs/screens).
+It's on a free tier, so the first load after it's been idle can take ~30–60s to wake, and the shared data resets periodically. Screenshots of every screen — building a library, composing and running, bulk edit, editing a case, branding — are in [`docs/screens`](docs/screens).
 
 ---
 
