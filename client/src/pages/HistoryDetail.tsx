@@ -33,6 +33,8 @@ export default function HistoryDetail() {
   const [loading, setLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<TestRunItem | null>(null);
   const [colorByName, setColorByName] = useState<Map<string, SectionColor | null>>(new Map());
+  const [moduleColorByName, setModuleColorByName] = useState<Map<string, SectionColor | null>>(new Map());
+  const [subColorByName, setSubColorByName] = useState<Map<string, SectionColor | null>>(new Map());
 
   const [showDelete, setShowDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -53,8 +55,21 @@ export default function HistoryDetail() {
   useEffect(() => {
     if (!run) return;
     if (user?.role === 'watcher') return;
-    api.sections.list(run.library_id).then(({ sections }) => {
-      setColorByName(new Map(sections.map((s) => [s.name, s.color])));
+    api.sections.list(run.library_id).then(({ modules, sub_modules, sections }) => {
+      const secMap = new Map<string, SectionColor | null>();
+      const modMap = new Map<string, SectionColor | null>();
+      const subMap = new Map<string, SectionColor | null>();
+      const addSecs = (secs: { name: string; color: SectionColor | null }[]) => secs.forEach((s) => secMap.set(s.name, s.color));
+      for (const m of modules) {
+        modMap.set(m.name, m.color);
+        for (const sm of m.sub_modules) { subMap.set(sm.name, sm.color); addSecs(sm.sections); }
+        addSecs(m.sections);
+      }
+      for (const sm of sub_modules) { subMap.set(sm.name, sm.color); addSecs(sm.sections); }
+      addSecs(sections);
+      setColorByName(secMap);
+      setModuleColorByName(modMap);
+      setSubColorByName(subMap);
     }).catch(() => { /* fall back to no colors */ });
   }, [run?.library_id, user?.role]);
 
@@ -211,10 +226,10 @@ export default function HistoryDetail() {
           </div>
         </div>
 
-        {/* Results by module → section */}
+        {/* Results by module → sub-module → section */}
         <div className="space-y-3">
           {blocks.map((block, bi) => {
-            const sectionCards = block.sections.map(({ sectionName, items }) => {
+            const renderSectionCard = ({ sectionName, items }: { sectionName: string; items: TestRunItem[] }) => {
               const color = colorByName.get(sectionName) ?? null;
               const tintClass = color ? ` section-tint-${color}` : '';
               return (
@@ -238,12 +253,26 @@ export default function HistoryDetail() {
                 </div>
               </div>
               );
+            };
+            const subBlocks = block.subModules.map((sub, si) => {
+              const cards = sub.sections.map(renderSectionCard);
+              if (sub.subModuleName === null) return <div key={`sub-${bi}-${si}`} className="space-y-3">{cards}</div>;
+              const subColor = subColorByName.get(sub.subModuleName) ?? null;
+              const subTint = subColor ? `section-tint-${subColor}` : 'submodule-header-plain';
+              return (
+                <div key={`sub-${bi}-${si}`} className="submodule-shell overflow-hidden">
+                  <div className={`submodule-header px-4 py-2 text-sm font-semibold ${subTint}`}>{sub.subModuleName}</div>
+                  <div className="p-3 space-y-3">{cards}</div>
+                </div>
+              );
             });
-            if (block.moduleName === null) return <div key={`root-${bi}`} className="space-y-3">{sectionCards}</div>;
+            if (block.moduleName === null) return <div key={`root-${bi}`} className="space-y-3">{subBlocks}</div>;
+            const modColor = moduleColorByName.get(block.moduleName) ?? null;
+            const modTint = modColor ? `section-tint-${modColor}` : 'module-header-plain';
             return (
               <div key={`mod-${bi}`} className="module-shell overflow-hidden">
-                <div className="module-header px-4 py-2.5 text-sm font-bold tracking-wide">{block.moduleName}</div>
-                <div className="p-3 space-y-3">{sectionCards}</div>
+                <div className={`module-header px-4 py-2.5 text-sm font-bold tracking-wide ${modTint}`}>{block.moduleName}</div>
+                <div className="p-3 space-y-3">{subBlocks}</div>
               </div>
             );
           })}

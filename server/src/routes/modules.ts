@@ -18,7 +18,7 @@ router.get('/', requireRole('runner'), (req, res) => {
     return res.status(404).json({ error: 'Library not found' });
   }
   const modules = db.prepare(
-    'SELECT id, name, order_index, library_id, created_at FROM modules WHERE library_id = ? ORDER BY order_index, id'
+    'SELECT id, name, order_index, color, library_id, created_at FROM modules WHERE library_id = ? ORDER BY order_index, id'
   ).all(libraryId);
   res.json({ modules });
 });
@@ -29,6 +29,9 @@ router.use(requireRole('editor'));
 const MAX_NAME_LEN = 60;
 const normalizeName = (n: unknown): string | null =>
   typeof n === 'string' && n.trim().length > 0 && n.trim().length <= MAX_NAME_LEN ? n.trim() : null;
+
+const VALID_COLORS = new Set(['red', 'orange', 'yellow', 'green', 'blue', 'purple']);
+const normalizeColor = (c: unknown): string | null => (typeof c === 'string' && VALID_COLORS.has(c) ? c : null);
 
 function requireLibrary(libraryId: number): boolean {
   return !!db.prepare('SELECT 1 FROM libraries WHERE id = ?').get(libraryId);
@@ -57,11 +60,11 @@ router.post('/', (req, res) => {
         order_index = (maxOrder?.max ?? -1) + 1;
       }
       const result = db.prepare(
-        'INSERT INTO modules (name, order_index, library_id) VALUES (?, ?, ?)'
-      ).run(name, order_index, libraryId);
+        'INSERT INTO modules (name, order_index, color, library_id) VALUES (?, ?, ?, ?)'
+      ).run(name, order_index, normalizeColor(req.body?.color), libraryId);
       moduleId = Number(result.lastInsertRowid);
     });
-    const module = db.prepare('SELECT id, name, order_index, library_id, created_at FROM modules WHERE id = ?').get(moduleId);
+    const module = db.prepare('SELECT id, name, order_index, color, library_id, created_at FROM modules WHERE id = ?').get(moduleId);
     writeEvent({ eventType: 'edit', actor: req.user!.username, library: libraryById(libraryId) });
     res.status(201).json(module);
   } catch (e: any) {
@@ -85,13 +88,27 @@ router.put('/reorder', (req, res) => {
   res.json({ ok: true });
 });
 
+// Rename and/or recolor. Either field may be sent alone.
 router.put('/:id', (req, res) => {
-  const name = normalizeName(req.body?.name);
-  if (!name) return res.status(400).json({ error: `Name required (1-${MAX_NAME_LEN} chars).` });
-  const result = db.prepare('UPDATE modules SET name = ? WHERE id = ?').run(name, req.params.id);
+  const body = req.body ?? {};
+  const hasName = Object.prototype.hasOwnProperty.call(body, 'name');
+  const hasColor = Object.prototype.hasOwnProperty.call(body, 'color');
+  if (!hasName && !hasColor) return res.status(400).json({ error: 'Nothing to update' });
+
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (hasName) {
+    const name = normalizeName(body.name);
+    if (!name) return res.status(400).json({ error: `Name required (1-${MAX_NAME_LEN} chars).` });
+    sets.push('name = ?'); vals.push(name);
+  }
+  if (hasColor) { sets.push('color = ?'); vals.push(normalizeColor(body.color)); }
+  vals.push(req.params.id);
+
+  const result = db.prepare(`UPDATE modules SET ${sets.join(', ')} WHERE id = ?`).run(...vals as any);
   if (result.changes === 0) return res.status(404).json({ error: 'Not found' });
   writeEvent({ eventType: 'edit', actor: req.user!.username, library: libraryForModule(req.params.id) });
-  res.json(db.prepare('SELECT id, name, order_index, library_id, created_at FROM modules WHERE id = ?').get(req.params.id));
+  res.json(db.prepare('SELECT id, name, order_index, color, library_id, created_at FROM modules WHERE id = ?').get(req.params.id));
 });
 
 // Delete a module. Its sections + cases fall back to the library root
@@ -108,24 +125,37 @@ router.delete('/:id', (req, res) => {
   const libraryId = module.library_id as number;
 
   transaction(() => {
-    // Capture what's about to be freed, in its current display order.
+    // Capture what falls back to the LIBRARY ROOT, in display order. Only the
+    // module's DIRECT children move to root: its sub-modules, its direct
+    // sections (sub_module_id NULL) and its direct unsectioned cases. Sections
+    // (and their cases) that live inside one of this module's sub-modules stay
+    // grouped under that sub-module — the sub-module itself is what moves to
+    // the root (module_id → NULL via ON DELETE SET NULL), carrying them along.
+    const freedSubModules = (db.prepare(
+      'SELECT id FROM sub_modules WHERE module_id = ? ORDER BY order_index, id'
+    ).all(moduleId) as any[]).map((r) => r.id);
     const freedSections = (db.prepare(
-      'SELECT id FROM sections WHERE module_id = ? ORDER BY order_index, id'
+      'SELECT id FROM sections WHERE module_id = ? AND sub_module_id IS NULL ORDER BY order_index, id'
     ).all(moduleId) as any[]).map((r) => r.id);
     const freedUnsectioned = (db.prepare(
-      'SELECT id FROM test_cases WHERE module_id = ? AND section_id IS NULL ORDER BY order_index, id'
+      'SELECT id FROM test_cases WHERE module_id = ? AND section_id IS NULL AND sub_module_id IS NULL ORDER BY order_index, id'
     ).all(moduleId) as any[]).map((r) => r.id);
 
     // Root maxes BEFORE the delete (before SET NULL folds the freed rows in).
+    let subOrder = ((db.prepare(
+      'SELECT MAX(order_index) as max FROM sub_modules WHERE library_id = ? AND module_id IS NULL'
+    ).get(libraryId)) as any)?.max ?? -1;
     let secOrder = ((db.prepare(
-      'SELECT MAX(order_index) as max FROM sections WHERE library_id = ? AND module_id IS NULL'
+      'SELECT MAX(order_index) as max FROM sections WHERE library_id = ? AND module_id IS NULL AND sub_module_id IS NULL'
     ).get(libraryId)) as any)?.max ?? -1;
     let caseOrder = ((db.prepare(
-      'SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND module_id IS NULL AND section_id IS NULL'
+      'SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND module_id IS NULL AND section_id IS NULL AND sub_module_id IS NULL'
     ).get(libraryId)) as any)?.max ?? -1;
 
     db.prepare('DELETE FROM modules WHERE id = ?').run(moduleId);
 
+    const updSub = db.prepare('UPDATE sub_modules SET order_index = ? WHERE id = ?');
+    for (const id of freedSubModules) updSub.run(++subOrder, id);
     const updSec = db.prepare('UPDATE sections SET order_index = ? WHERE id = ?');
     for (const id of freedSections) updSec.run(++secOrder, id);
     const updCase = db.prepare('UPDATE test_cases SET order_index = ? WHERE id = ?');

@@ -184,32 +184,33 @@ button.bg-white.rounded-lg:hover {
 .dark .section-tint-blue   { background-color: rgba(59, 130, 246, 0.18); }
 .dark .section-tint-purple { background-color: rgba(168, 85, 247, 0.18); }
 
-/* ── Module container ─────────────────────────────────────────
-   A module is the "big section" grouping level: library → MODULE → section
-   → case. It's deliberately NOT color-customizable and reads as chrome, not
-   content — the header bar uses the same dark slate gradient as the left nav
-   so it's instantly distinguishable from the pastel-tinted section cards
-   inside it. The shell is a thin slate outline that gathers a module's
-   sections + cases into one visual block; it stays dark chrome in every theme
-   (light / dark / pastel), matching the sidebar. */
+/* ── Module + sub-module containers ───────────────────────────
+   The container hierarchy is library → MODULE → SUB-MODULE → section → case.
+   Every level is now color-customizable from the same 6-hue palette as
+   sections. A container header carries either its `section-tint-*` color (when
+   one is picked) or the neutral `*-plain` background below; nesting depth reads
+   from the indentation + the module's heavier border. Header background is set
+   ONLY by the plain/tint classes (never by `.module-header` itself) so the tint
+   never fights a base rule. */
 .module-shell {
   border: 1.5px solid #cbd5e1;
   border-radius: 0.75rem;
 }
 .dark .module-shell { border-color: #334155; }
-.module-header {
-  background: linear-gradient(to bottom, #0f172a, #020617);
-  color: #f8fafc;
+.module-header { font-weight: 700; color: #0f172a; }
+.dark .module-header { color: #f1f5f9; }
+.module-header-plain { background-color: #e2e8f0; }
+.dark .module-header-plain { background-color: #334155; }
+
+.submodule-shell {
+  border: 1px solid #d7dee8;
+  border-radius: 0.6rem;
 }
-/* Keep the module header's own controls (select, inputs) readable on the
-   dark bar even though global dark-mode rules only target `.dark`. */
-.module-header select,
-.module-header input {
-  background-color: rgba(255, 255, 255, 0.08);
-  color: #f8fafc;
-  border-color: rgba(255, 255, 255, 0.2);
-}
-.module-header ::placeholder { color: #94a3b8; }
+.dark .submodule-shell { border-color: #2c3a52; }
+.submodule-header { font-weight: 600; color: #1e293b; }
+.dark .submodule-header { color: #e2e8f0; }
+.submodule-header-plain { background-color: #eef2f7; }
+.dark .submodule-header-plain { background-color: #2a3a52; }
 
 /* ── Library selector ─────────────────────────────────────────
    The "building" level of the case → section → library hierarchy, so it's

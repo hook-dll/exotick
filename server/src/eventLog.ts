@@ -80,3 +80,10 @@ export function libraryForModule(moduleId: number | string): { id: number; name:
   ).get(moduleId) as any;
   return row ? { id: row.id, name: row.name } : null;
 }
+
+export function libraryForSubModule(subModuleId: number | string): { id: number; name: string } | null {
+  const row = db.prepare(
+    'SELECT l.id, l.name FROM sub_modules sm JOIN libraries l ON l.id = sm.library_id WHERE sm.id = ?'
+  ).get(subModuleId) as any;
+  return row ? { id: row.id, name: row.name } : null;
+}

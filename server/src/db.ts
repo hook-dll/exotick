@@ -257,6 +257,61 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_test_cases_module_id ON test_cases(module_id);
 `);
 
+// ── sub-modules migration ──────────────────────────────────────────────
+// A sub-module is an OPTIONAL container one level BELOW a module and one
+// ABOVE a section: library → module → SUB-MODULE → section → case. It mirrors
+// the module_id pattern: sections and test_cases each carry a NULLABLE
+// sub_module_id (NULL = not in a sub-module), and a sub_module carries a
+// NULLABLE module_id (NULL = the sub-module sits at the library root, outside
+// any module). Every layer stays optional, so a legacy DB upgrades with every
+// sub_module_id NULL and renders exactly as before.
+//
+// Invariant, enforced in the route layer just like module_id: a section inside
+// a sub-module has module_id === subModule.module_id; a sectioned case mirrors
+// its section's module_id AND sub_module_id.
+//
+// ON DELETE SET NULL throughout: deleting a sub-module frees its sections +
+// cases to the parent module (or the library root); deleting a module frees
+// its sub-modules to the root — content is never destroyed.
+//
+// Modules + sub-modules also gain a NULLABLE `color` (the same 6-hue palette as
+// sections) — every container level is color-customizable now.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sub_modules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    order_index INTEGER NOT NULL DEFAULT 0,
+    color TEXT,
+    module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL,
+    library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_sub_modules_library_id ON sub_modules(library_id);
+  CREATE INDEX IF NOT EXISTS idx_sub_modules_module_id  ON sub_modules(module_id);
+`);
+
+const modCols = (db.prepare('PRAGMA table_info(modules)').all() as any[]).map((c) => c.name);
+if (!modCols.includes('color')) db.exec('ALTER TABLE modules ADD COLUMN color TEXT');
+
+const secCols4 = (db.prepare('PRAGMA table_info(sections)').all() as any[]).map((c) => c.name);
+if (!secCols4.includes('sub_module_id')) {
+  db.exec('ALTER TABLE sections ADD COLUMN sub_module_id INTEGER REFERENCES sub_modules(id) ON DELETE SET NULL');
+}
+const tcCols4 = (db.prepare('PRAGMA table_info(test_cases)').all() as any[]).map((c) => c.name);
+if (!tcCols4.includes('sub_module_id')) {
+  db.exec('ALTER TABLE test_cases ADD COLUMN sub_module_id INTEGER REFERENCES sub_modules(id) ON DELETE SET NULL');
+}
+// Sub-module the case belonged to at compose time (parallel to
+// snapshot_module_name / snapshot_section_name). NULL = not in a sub-module.
+const triCols2 = (db.prepare('PRAGMA table_info(test_run_items)').all() as any[]).map((c) => c.name);
+if (!triCols2.includes('snapshot_sub_module_name')) {
+  db.exec('ALTER TABLE test_run_items ADD COLUMN snapshot_sub_module_name TEXT');
+}
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_sections_sub_module_id   ON sections(sub_module_id);
+  CREATE INDEX IF NOT EXISTS idx_test_cases_sub_module_id ON test_cases(sub_module_id);
+`);
+
 export function transaction<T>(fn: () => T): T {
   db.exec('BEGIN');
   try {

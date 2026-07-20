@@ -1,7 +1,7 @@
 ================================================================================
 exotick — Developer / Maintainer Reference
 ================================================================================
-Last updated: 2026-07-17
+Last updated: 2026-07-20
 
 Everything a maintainer needs to reconstruct or modify the system. Dry and
 authoritative. If it isn't here, it isn't a stable feature.
@@ -178,11 +178,28 @@ exotick/
                                   requireRole('editor') below; POST / (
                                   requires library_id; optional after_id for
                                   insert position), PUT /reorder, PUT /:id
-                                  (rename), DELETE /:id (frees the module's
-                                  sections + module-level unsectioned cases
-                                  back to the library root via ON DELETE SET
-                                  NULL, renumbering them onto the end of the
-                                  root buckets — content is never destroyed).
+                                  (rename and/or recolor), DELETE /:id (frees
+                                  the module's sub-modules + direct sections +
+                                  direct unsectioned cases back to the library
+                                  root via ON DELETE SET NULL, renumbering onto
+                                  the end of the root buckets — content is never
+                                  destroyed; sections inside a freed sub-module
+                                  stay grouped under it). Modules now carry an
+                                  optional color (POST/PUT accept it).
+        subModules.ts             Sub-module CRUD — the OPTIONAL layer between
+                                  module and section (library → module →
+                                  sub-module → section → case). Mirrors
+                                  modules.ts. GET /?library_id=N (runner+, flat
+                                  list incl. color + module_id); POST / (
+                                  library_id; optional module_id parent +
+                                  after_id + color — order scoped to the
+                                  (library, module) bucket), PUT /reorder,
+                                  PUT /:id (rename/recolor), POST /move-module
+                                  (move sub-modules with their sections + cases
+                                  into a module or to root; cascades module_id
+                                  onto children), DELETE /:id (frees child
+                                  sections + cases up into the parent module,
+                                  sub_module_id → NULL).
         sections.ts               GET /?library_id=N (read, runner+,
                                   library_id required) now returns a
                                   module-grouped TREE:
@@ -302,11 +319,12 @@ exotick/
                                   extension+mimetype whitelist for PNG/JPG/
                                   GIF/WebP — no SVG, 10 MB)
         backup.ts                 admin+ throughout; per-library scope.
-                                  backup.json is VERSION 4: carries a
-                                  `modules` array (each with its own
-                                  sections + unsectioned) alongside the
-                                  root sections/unsectioned. v1-v3 (no
-                                  modules) still import at the root.
+                                  backup.json is VERSION 5: carries a
+                                  `modules` array (each with color +
+                                  sub_modules[] + sections + unsectioned) and a
+                                  root `sub_modules` array alongside the root
+                                  sections/unsectioned. v1-v4 still import
+                                  (a v4 file has no sub_modules).
                                   GET /export?library_id=N (.zip with
                                   backup.json — carrying library.name —
                                   + uploads/ referenced by notes, including
@@ -339,9 +357,10 @@ exotick/
                                   new library called "Samples" (or
                                   "Samples (2)" if taken) and seeds it.
                                   Never touches existing libraries. The seed
-                                  now wraps the Auth + Checkout sections in a
-                                  "Core Flows" module to demonstrate the
-                                  module layer; other sections stay at root.
+                                  wraps Auth + Checkout in a colored "Core
+                                  Flows" module — Auth nested under a "Sign-in"
+                                  sub-module — to demonstrate every container
+                                  level + colors; other sections stay at root.
         settings.ts               GET /take-over-cooldown (any authed;
                                   returns {minutes}); PUT (admin, range
                                   0-10080). getCooldownMinutes() helper
@@ -587,15 +606,37 @@ libraries
   created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 
 modules                        OPTIONAL "big section" container inside a
-                               library, one level above sections. A module
-                               groups sections + unsectioned cases; content
-                               with module_id NULL sits at the library root
-                               exactly as before modules existed (the layer
-                               is additive, never mandatory). Deleting a
-                               library cascades its modules.
+                               library, one level above sub-modules /
+                               sections. Groups sub-modules + sections +
+                               unsectioned cases; content with module_id NULL
+                               sits at the library root (the layer is additive,
+                               never mandatory). Deleting a library cascades
+                               its modules.
   id             INTEGER PK AUTOINCREMENT
   name           TEXT NOT NULL
   order_index    INTEGER NOT NULL DEFAULT 0
+  color          TEXT                          NULL, or one of red/orange/
+                                                yellow/green/blue/purple (added
+                                                with the sub-module feature —
+                                                modules are color-customizable
+                                                now, no longer fixed chrome)
+  library_id     INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE
+  created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+
+sub_modules                    OPTIONAL container ONE LEVEL BELOW a module and
+                               above a section: library → module → SUB-MODULE →
+                               section → case. Groups sections + unsectioned
+                               cases. module_id NULL = the sub-module sits at
+                               the library root (outside any module). Additive,
+                               never mandatory. Deleting a module frees its
+                               sub-modules to the root (ON DELETE SET NULL);
+                               deleting a library cascades its sub-modules.
+  id             INTEGER PK AUTOINCREMENT
+  name           TEXT NOT NULL
+  order_index    INTEGER NOT NULL DEFAULT 0    scoped to the (library, module)
+                                                bucket
+  color          TEXT                          NULL, or one of the 6 hues
+  module_id      INTEGER REFERENCES modules(id) ON DELETE SET NULL
   library_id     INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE
   created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 
@@ -613,6 +654,13 @@ sections
                                                 Deleting a module frees its
                                                 sections to the root, it does
                                                 not delete them.
+  sub_module_id  INTEGER REFERENCES sub_modules(id) ON DELETE SET NULL
+                                                NULL = not in a sub-module. When
+                                                set, module_id equals the
+                                                sub-module's module_id (app-
+                                                enforced invariant). order_index
+                                                is scoped to the (library,
+                                                module, sub_module) bucket.
   created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 
 test_cases
@@ -629,6 +677,13 @@ test_cases
                                                 always equals its section's
                                                 module_id. Unsectioned cases
                                                 carry their own module_id.
+  sub_module_id  INTEGER REFERENCES sub_modules(id) ON DELETE SET NULL
+                                                NULL = not in a sub-module. Same
+                                                invariant: a sectioned case
+                                                mirrors its section's
+                                                sub_module_id; an unsectioned
+                                                case carries its own (its
+                                                module_id is derived from it).
   created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 
 test_runs
@@ -656,8 +711,11 @@ test_run_items
   snapshot_section_name    TEXT                copied at compose time
   snapshot_module_name     TEXT                copied at compose time; NULL if
                                                 the case was not in a module.
-                                                Run views + PDFs group by
-                                                module → section using it.
+                                                Run views + PDFs group by module
+                                                → sub-module → section using it +
+                                                snapshot_sub_module_name.
+  snapshot_sub_module_name TEXT                copied at compose time; NULL if
+                                                the case was not in a sub-module.
   order_index              INTEGER NOT NULL DEFAULT 0
   status                   TEXT CHECK(status IN ('pass','fail','skip'))
                                                 NULL until marked
@@ -744,8 +802,12 @@ Indexes:
   idx_test_cases_library_id    ON test_cases(library_id)
   idx_test_runs_library_id     ON test_runs(library_id)
   idx_modules_library_id       ON modules(library_id)
+  idx_sub_modules_library_id   ON sub_modules(library_id)
+  idx_sub_modules_module_id    ON sub_modules(module_id)
   idx_sections_module_id       ON sections(module_id)
+  idx_sections_sub_module_id   ON sections(sub_module_id)
   idx_test_cases_module_id     ON test_cases(module_id)
+  idx_test_cases_sub_module_id ON test_cases(sub_module_id)
   idx_event_log_created_at     ON event_log(created_at)
   idx_event_log_test_run_id    ON event_log(test_run_id)
 
@@ -786,6 +848,19 @@ Migrations (all idempotent, run on server start):
     CREATE INDEX idx_sections_module_id / idx_test_cases_module_id
   module_id is NULLABLE with no default, so every legacy section/case comes
   back as module_id = NULL (library root) and renders identically to before.
+
+  Sub-modules migration (idempotent, runs on every start, AFTER modules):
+    CREATE TABLE IF NOT EXISTS sub_modules (…, color, module_id REFERENCES
+                           modules(id) ON DELETE SET NULL, library_id …) +
+                           idx_sub_modules_library_id / idx_sub_modules_module_id
+    ALTER TABLE modules        ADD COLUMN color TEXT        (only if missing)
+    ALTER TABLE sections       ADD COLUMN sub_module_id INTEGER REFERENCES
+                           sub_modules(id) ON DELETE SET NULL   (if missing)
+    ALTER TABLE test_cases     ADD COLUMN sub_module_id …        (if missing)
+    ALTER TABLE test_run_items ADD COLUMN snapshot_sub_module_name TEXT
+    CREATE INDEX idx_sections_sub_module_id / idx_test_cases_sub_module_id
+  All new columns are NULLABLE with no default, so every legacy row comes back
+  outside any sub-module (sub_module_id = NULL) and renders identically.
 
 
 ================================================================================
@@ -956,6 +1031,8 @@ libraries            GET /                            (none — any authed)
                                                       references the library
                                                       OR when it's the last
 modules              GET /?library_id=N               requireRole('runner')
+                     everything else                  requireRole('editor')
+subModules           GET /?library_id=N               requireRole('runner')
                      everything else                  requireRole('editor')
 sections             GET /?library_id=N               requireRole('runner')
                      move-module                      requireRole('editor')
@@ -1136,12 +1213,15 @@ Graceful shutdown:
   test_run_items survive via ON DELETE SET NULL.
   Import guardrails: 100 MB uploaded, 2000 entries, 25 MB per entry, 500 MB
   total inflated — beyond that the archive is rejected.
-  Backup format is now VERSION 4: backup.json carries a `modules` array
-  ([{ name, order_index, sections[], unsectioned[] }]) alongside the root
-  `sections` / `unsectioned`. v1-v3 (no modules) still import — their content
-  lands at the library root. Import always creates modules as NEW rows
-  (append), matching merge's additive semantics; replace deletes the target
-  library's cases → sections → modules before restoring.
+  Backup format is now VERSION 5: backup.json carries a `modules` array (each
+  { name, order_index, color, sub_modules[], sections[], unsectioned[] }) and a
+  root `sub_modules` array, where each sub_module is
+  { name, order_index, color, sections[], unsectioned[] }, alongside the root
+  `sections` / `unsectioned`. v1-v4 still import — a v4 file has no sub_modules
+  key so its content lands at the module/root level unchanged. Import always
+  creates containers as NEW rows (append), matching merge's additive semantics;
+  replace deletes the target library's cases → sections → sub_modules → modules
+  before restoring.
 
 - Modules are the OPTIONAL "big section" layer: library → module → section →
   case. module_id is NULLABLE on sections + test_cases (NULL = library root),
@@ -1155,6 +1235,20 @@ Graceful shutdown:
   snapshot_module_name; the run views (ActiveTestRun, HistoryDetail) and both
   PDFs reconstruct the module → section grouping from that snapshot in a
   single ordered pass (client helper: client/src/util/runGroups.ts).
+
+- Sub-modules add a THIRD optional container level: library → module →
+  sub-module → section → case. Same additive design as modules — sub_module_id
+  is NULLABLE on sections + test_cases, and a sub_module's module_id is NULLABLE
+  (a sub-module can sit at the library root, outside any module). The invariant
+  extends: a section inside a sub-module has module_id === subModule.module_id,
+  and a sectioned case mirrors its section's module_id AND sub_module_id.
+  Deleting a sub-module frees its content up into the parent module; deleting a
+  module frees its sub-modules to the root (both ON DELETE SET NULL). Every
+  bucket key (order_index scope, unsectioned pile, bulk-copy dedup) is now
+  (library, module, sub_module). Modules AND sub-modules are color-customizable
+  (same 6-hue palette as sections) — the old "modules are fixed dark chrome"
+  note is gone; buildModuleBlocks + both PDFs now group module → sub-module →
+  section. Compose snapshots snapshot_sub_module_name alongside the module name.
 
 - POST /api/samples/load ALWAYS creates a new library called "Samples"
   (or "Samples (2)" if that name is taken). Never modifies existing

@@ -39,12 +39,15 @@ router.get('/test-cases', requireRole('runner'), (req, res) => {
   const caseStmt = db.prepare('SELECT * FROM test_cases WHERE section_id = ? ORDER BY order_index, id');
   const casesForSection = new Map<number, any[]>();
   for (const s of allSections) casesForSection.set(s.id, keep(caseStmt.all(s.id) as any[]));
-  const unsecFor = (moduleId: number | null): any[] => keep(db.prepare(
-    'SELECT * FROM test_cases WHERE library_id = ? AND module_id IS ? AND section_id IS NULL ORDER BY order_index, id'
-  ).all(libraryId, moduleId) as any[]);
+  const unsecFor = (moduleId: number | null, subModuleId: number | null): any[] => keep(db.prepare(
+    'SELECT * FROM test_cases WHERE library_id = ? AND module_id IS ? AND sub_module_id IS ? AND section_id IS NULL ORDER BY order_index, id'
+  ).all(libraryId, moduleId, subModuleId) as any[]);
 
   const modules = db.prepare(
     'SELECT * FROM modules WHERE library_id = ? ORDER BY order_index, id'
+  ).all(libraryId) as any[];
+  const subModules = db.prepare(
+    'SELECT * FROM sub_modules WHERE library_id = ? ORDER BY order_index, id'
   ).all(libraryId) as any[];
 
   res.setHeader('Cache-Control', 'no-store');
@@ -83,22 +86,45 @@ router.get('/test-cases', requireRole('runner'), (req, res) => {
     doc.moveDown(0.8);
   };
 
-  // Modules first (each a top-level heading), then library-root content.
+  const subHasContent = (sm: any): boolean =>
+    unsecFor(sm.module_id ?? null, sm.id).length > 0 ||
+    allSections.filter((s) => s.sub_module_id === sm.id).some((s) => (casesForSection.get(s.id) ?? []).length > 0);
+
+  // Render a sub-module: its heading, then its sections + unsectioned pile,
+  // indented one level deeper than the sub-module heading.
+  const renderSubModule = (sm: any, headingIndent: number, childIndent: number) => {
+    if (!subHasContent(sm)) return;
+    doc.fontSize(14).font(FONT.bold).fillColor('#334155').text(sm.name, { indent: headingIndent });
+    doc.fillColor('black');
+    doc.moveDown(0.3);
+    for (const s of allSections.filter((sec) => sec.sub_module_id === sm.id)) renderSection(s, childIndent);
+    renderUnsectioned(unsecFor(sm.module_id ?? null, sm.id), childIndent);
+    doc.moveDown(0.3);
+  };
+
+  // Modules first (each a top-level heading), then library-root content. Within
+  // a module: its sub-modules, then module-direct sections, then its pile.
   for (const m of modules) {
-    const moduleSections = allSections.filter((s) => s.module_id === m.id);
-    const moduleUnsec = unsecFor(m.id);
-    const hasContent = moduleUnsec.length > 0 || moduleSections.some((s) => (casesForSection.get(s.id) ?? []).length > 0);
+    const moduleSubs = subModules.filter((sm) => sm.module_id === m.id);
+    const moduleSections = allSections.filter((s) => s.module_id === m.id && s.sub_module_id == null);
+    const moduleUnsec = unsecFor(m.id, null);
+    const hasContent = moduleUnsec.length > 0
+      || moduleSections.some((s) => (casesForSection.get(s.id) ?? []).length > 0)
+      || moduleSubs.some(subHasContent);
     if (!hasContent) continue;
     doc.fontSize(15).font(FONT.bold).fillColor('#1e293b').text(m.name.toUpperCase());
     doc.fillColor('black');
     doc.moveDown(0.4);
+    for (const sm of moduleSubs) renderSubModule(sm, 16, 32);
     for (const s of moduleSections) renderSection(s, 16);
     renderUnsectioned(moduleUnsec, 16);
     doc.moveDown(0.4);
   }
 
-  for (const s of allSections.filter((sec) => sec.module_id == null)) renderSection(s, 0);
-  renderUnsectioned(unsecFor(null), 0);
+  // Library root: root sub-modules, then root sections, then root unsectioned.
+  for (const sm of subModules.filter((x) => x.module_id == null)) renderSubModule(sm, 0, 16);
+  for (const s of allSections.filter((sec) => sec.module_id == null && sec.sub_module_id == null)) renderSection(s, 0);
+  renderUnsectioned(unsecFor(null, null), 0);
 
   doc.end();
 });
@@ -167,17 +193,21 @@ router.get('/test-runs/:id', (req, res) => {
     doc.moveDown(1);
   }
 
-  // Group by module → section. Items arrive in compose order (module, then
-  // section, then case), so walking them in order and printing a heading
-  // whenever the module or section name changes preserves that grouping.
+  // Group by module → sub-module → section. Items arrive in compose order
+  // (module, then sub-module, then section, then case), so walking them in
+  // order and printing a heading whenever a level's name changes preserves the
+  // grouping. Indent deepens one step per present level.
   let currentModule: string | null | undefined = undefined;
+  let currentSubModule: string | null | undefined = undefined;
   let currentSection: string | null | undefined = undefined;
   for (const item of items) {
     const moduleName: string | null = item.snapshot_module_name ?? null;
+    const subModuleName: string | null = item.snapshot_sub_module_name ?? null;
     const sectionName = item.snapshot_section_name || 'Unsectioned';
     if (moduleName !== currentModule) {
       currentModule = moduleName;
-      currentSection = undefined; // force the section heading to reprint under the new module
+      currentSubModule = undefined; // force sub-module + section headings to reprint
+      currentSection = undefined;
       if (moduleName) {
         doc.moveDown(0.2);
         doc.fontSize(15).font(FONT.bold).fillColor('#1e293b').text(moduleName.toUpperCase());
@@ -185,14 +215,23 @@ router.get('/test-runs/:id', (req, res) => {
         doc.moveDown(0.3);
       }
     }
+    if (subModuleName !== currentSubModule) {
+      currentSubModule = subModuleName;
+      currentSection = undefined; // force the section heading to reprint under the new sub-module
+      if (subModuleName) {
+        doc.fontSize(14).font(FONT.bold).fillColor('#334155').text(subModuleName, { indent: moduleName ? 16 : 0 });
+        doc.fillColor('black');
+        doc.moveDown(0.3);
+      }
+    }
+    const level = (moduleName ? 1 : 0) + (subModuleName ? 1 : 0);
+    const indent = level * 16;
     if (sectionName !== currentSection) {
       currentSection = sectionName;
-      const indent = moduleName ? 16 : 0;
       doc.fontSize(13).font(FONT.bold).text(sectionName, { indent });
       doc.moveDown(0.3);
     }
 
-    const indent = moduleName ? 16 : 0;
     const label =
       item.status === 'pass' ? '[PASS]' :
       item.status === 'fail' ? '[FAIL]' :

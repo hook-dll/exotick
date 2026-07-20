@@ -6,7 +6,7 @@ import LibraryPicker from '../library/LibraryPicker';
 import Action from '../iconmode/Action';
 import { useAuth } from '../auth/AuthContext';
 import { useLibrary } from '../library/LibraryContext';
-import type { Module, Section, TestCase } from '../types';
+import type { Module, Section, SubModule, TestCase } from '../types';
 
 function TriCheckbox({
   checked, indeterminate, onChange, title, className,
@@ -34,6 +34,7 @@ export default function ComposeTestRun() {
   const canEditCases = user?.role === 'admin' || user?.role === 'editor';
   const canCompose = user?.role === 'editor' || user?.role === 'runner';
   const [modules, setModules] = useState<Module[]>([]);
+  const [rootSubModules, setRootSubModules] = useState<SubModule[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [unsectioned, setUnsectioned] = useState<TestCase[]>([]);
   const [name, setName] = useState('');
@@ -52,8 +53,9 @@ export default function ComposeTestRun() {
     setLoading(true);
     setSelectedCases(new Set());
     setSelectedId(null);
-    api.sections.list(activeLibraryId).then(({ modules: m, sections: s, unsectioned: u }) => {
+    api.sections.list(activeLibraryId).then(({ modules: m, sub_modules: rs, sections: s, unsectioned: u }) => {
       setModules(m);
+      setRootSubModules(rs);
       setSections(s);
       setUnsectioned(u);
       setLoading(false);
@@ -139,9 +141,17 @@ export default function ComposeTestRun() {
     );
   }
 
-  // Flattened views across modules + root, for totals and the preview lookup.
-  const allSections = [...modules.flatMap((m) => m.sections), ...sections];
-  const allUnsectioned = [...modules.flatMap((m) => m.unsectioned), ...unsectioned];
+  // Flattened views across every container + root, for totals + preview lookup.
+  const allSections = [
+    ...modules.flatMap((m) => [...m.sub_modules.flatMap((sm) => sm.sections), ...m.sections]),
+    ...rootSubModules.flatMap((sm) => sm.sections),
+    ...sections,
+  ];
+  const allUnsectioned = [
+    ...modules.flatMap((m) => [...m.sub_modules.flatMap((sm) => sm.unsectioned), ...m.unsectioned]),
+    ...rootSubModules.flatMap((sm) => sm.unsectioned),
+    ...unsectioned,
+  ];
 
   const totalSelected = selectedCases.size;
   const totalAvailable =
@@ -209,6 +219,19 @@ export default function ComposeTestRun() {
         {section.test_cases.length > 0 && (
           <div className="px-4 py-3">{section.test_cases.map(renderCaseRow)}</div>
         )}
+      </div>
+    );
+  };
+
+  const renderSubModuleCard = (sm: SubModule) => {
+    const headerTint = sm.color ? `section-tint-${sm.color}` : 'submodule-header-plain';
+    return (
+      <div key={`sub-${sm.id}`} className="submodule-shell overflow-hidden">
+        <div className={`submodule-header px-4 py-2 text-sm font-semibold ${headerTint}`}>{sm.name}</div>
+        <div className="p-3 space-y-3">
+          {sm.sections.map(renderSectionCard)}
+          {renderUnsecCard(sm.unsectioned, `su-${sm.id}`)}
+        </div>
       </div>
     );
   };
@@ -304,7 +327,7 @@ export default function ComposeTestRun() {
           </div>
         </div>
 
-        {modules.length === 0 && sections.length === 0 && unsectioned.length === 0 ? (
+        {modules.length === 0 && rootSubModules.length === 0 && sections.length === 0 && unsectioned.length === 0 ? (
           <div className="bg-white border rounded-lg p-6 text-center text-gray-400 text-sm">
             {canEditCases ? (
               <>
@@ -317,15 +340,20 @@ export default function ComposeTestRun() {
           </div>
         ) : (
           <div className="space-y-3">
-            {modules.map((m) => (
-              <div key={m.id} className="module-shell overflow-hidden">
-                <div className="module-header px-4 py-2.5 text-sm font-bold tracking-wide">{m.name}</div>
-                <div className="p-3 space-y-3">
-                  {m.sections.map(renderSectionCard)}
-                  {renderUnsecCard(m.unsectioned, `mu-${m.id}`)}
+            {modules.map((m) => {
+              const headerTint = m.color ? `section-tint-${m.color}` : 'module-header-plain';
+              return (
+                <div key={m.id} className="module-shell overflow-hidden">
+                  <div className={`module-header px-4 py-2.5 text-sm font-bold tracking-wide ${headerTint}`}>{m.name}</div>
+                  <div className="p-3 space-y-3">
+                    {m.sub_modules.map(renderSubModuleCard)}
+                    {m.sections.map(renderSectionCard)}
+                    {renderUnsecCard(m.unsectioned, `mu-${m.id}`)}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
+            {rootSubModules.map(renderSubModuleCard)}
             {sections.map(renderSectionCard)}
             {renderUnsecCard(unsectioned, 'root-unsec')}
           </div>

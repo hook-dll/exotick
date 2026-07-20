@@ -16,6 +16,11 @@ router.use(requireRole('admin'));
 
 const FORMAT = 'exotick-backup';
 const LEGACY_FORMAT = 'testcms-backup'; // pre-rename backups still accepted on import
+// v5: adds `sub_modules` (nested inside each module and at the root) — an ordered
+//     list of sub-module containers, each with its own sections + unsectioned
+//     cases. Modules + sub-modules now also carry `color`. A v4 reader that
+//     ignored `sub_modules`/`color` still restores modules + root content, and
+//     v4 files (no sub_modules key) import here unchanged.
 // v4: adds `modules` — an ordered list of module containers, each with its own
 //     sections + unsectioned cases. Root-level sections/unsectioned (outside
 //     any module) stay at the top level as before, so a v3 reader that ignored
@@ -24,7 +29,7 @@ const LEGACY_FORMAT = 'testcms-backup'; // pre-rename backups still accepted on 
 // v3/v2: library-scoped (backup.json.library = { name }, sections/unsectioned inside)
 // v1: whole-library (accepted on import — imported into a new library named
 //     "Imported" or user-supplied)
-const VERSION = 4;
+const VERSION = 5;
 
 // Matches every /uploads/<file> reference inside a notes string.
 const UPLOAD_RE = /\/uploads\/([A-Za-z0-9._-]+)/g;
@@ -36,7 +41,8 @@ const MAX_TOTAL_BYTES   = 500 * 1024 * 1024;
 
 type CaseExport = { description: string; notes: string | null; order_index: number };
 type SectionExport = { name: string; order_index: number; color: string | null; test_cases: CaseExport[] };
-type ModuleExport = { name: string; order_index: number; sections: SectionExport[]; unsectioned: CaseExport[] };
+type SubModuleExport = { name: string; order_index: number; color: string | null; sections: SectionExport[]; unsectioned: CaseExport[] };
+type ModuleExport = { name: string; order_index: number; color: string | null; sub_modules: SubModuleExport[]; sections: SectionExport[]; unsectioned: CaseExport[] };
 
 const VALID_COLORS = new Set(['red', 'orange', 'yellow', 'green', 'blue', 'purple']);
 
@@ -72,10 +78,11 @@ router.get('/export', (req, res) => {
   const library = db.prepare('SELECT id, name FROM libraries WHERE id = ?').get(libraryId) as any;
   if (!library) return res.status(404).json({ error: 'Library not found' });
 
-  // Build sections + unsectioned scoped to one module bucket (NULL = library
-  // root). `module_id IS ?` matches NULL-to-NULL and value-to-value alike.
-  const buildSections = (moduleId: number | null): SectionExport[] =>
-    (db.prepare('SELECT * FROM sections WHERE library_id = ? AND module_id IS ? ORDER BY order_index, id').all(libraryId, moduleId) as any[]).map((s) => ({
+  // Build sections + unsectioned scoped to one (module, sub_module) bucket
+  // (NULL = library root / not in that container). `IS ?` matches NULL-to-NULL
+  // and value-to-value alike.
+  const buildSections = (moduleId: number | null, subModuleId: number | null): SectionExport[] =>
+    (db.prepare('SELECT * FROM sections WHERE library_id = ? AND module_id IS ? AND sub_module_id IS ? ORDER BY order_index, id').all(libraryId, moduleId, subModuleId) as any[]).map((s) => ({
       name: s.name,
       order_index: s.order_index,
       color: s.color ?? null,
@@ -83,22 +90,34 @@ router.get('/export', (req, res) => {
         'SELECT description, notes, order_index FROM test_cases WHERE section_id = ? ORDER BY order_index, id'
       ).all(s.id) as any[]).map((c) => ({ description: c.description, notes: c.notes ?? null, order_index: c.order_index })),
     }));
-  const buildUnsectioned = (moduleId: number | null): CaseExport[] =>
+  const buildUnsectioned = (moduleId: number | null, subModuleId: number | null): CaseExport[] =>
     (db.prepare(
-      'SELECT description, notes, order_index FROM test_cases WHERE library_id = ? AND module_id IS ? AND section_id IS NULL ORDER BY order_index, id'
-    ).all(libraryId, moduleId) as any[]).map((c) => ({ description: c.description, notes: c.notes ?? null, order_index: c.order_index }));
+      'SELECT description, notes, order_index FROM test_cases WHERE library_id = ? AND module_id IS ? AND sub_module_id IS ? AND section_id IS NULL ORDER BY order_index, id'
+    ).all(libraryId, moduleId, subModuleId) as any[]).map((c) => ({ description: c.description, notes: c.notes ?? null, order_index: c.order_index }));
+
+  const buildSubModules = (moduleId: number | null): SubModuleExport[] =>
+    (db.prepare('SELECT id, name, order_index, color FROM sub_modules WHERE library_id = ? AND module_id IS ? ORDER BY order_index, id').all(libraryId, moduleId) as any[]).map((sm) => ({
+      name: sm.name,
+      order_index: sm.order_index,
+      color: sm.color ?? null,
+      sections: buildSections(moduleId, sm.id),
+      unsectioned: buildUnsectioned(moduleId, sm.id),
+    }));
 
   const modules: ModuleExport[] = (db.prepare(
-    'SELECT id, name, order_index FROM modules WHERE library_id = ? ORDER BY order_index, id'
+    'SELECT id, name, order_index, color FROM modules WHERE library_id = ? ORDER BY order_index, id'
   ).all(libraryId) as any[]).map((m) => ({
     name: m.name,
     order_index: m.order_index,
-    sections: buildSections(m.id),
-    unsectioned: buildUnsectioned(m.id),
+    color: m.color ?? null,
+    sub_modules: buildSubModules(m.id),
+    sections: buildSections(m.id, null),
+    unsectioned: buildUnsectioned(m.id, null),
   }));
 
-  const sections = buildSections(null);
-  const unsectioned = buildUnsectioned(null);
+  const sub_modules = buildSubModules(null);
+  const sections = buildSections(null, null);
+  const unsectioned = buildUnsectioned(null, null);
 
   const backup = {
     format: FORMAT,
@@ -106,6 +125,7 @@ router.get('/export', (req, res) => {
     exported_at: new Date().toISOString(),
     library: { name: library.name },
     modules,
+    sub_modules,
     sections,
     unsectioned,
   };
@@ -114,8 +134,10 @@ router.get('/export', (req, res) => {
     'backup.json': strToU8(JSON.stringify(backup, null, 2)),
   };
   const notesInSections = (secs: SectionExport[]) => secs.flatMap((s) => s.test_cases.map((c) => c.notes));
+  const notesInSubs = (subs: SubModuleExport[]) => subs.flatMap((sm) => [...notesInSections(sm.sections), ...sm.unsectioned.map((c) => c.notes)]);
   const allNotes = [
-    ...modules.flatMap((m) => [...notesInSections(m.sections), ...m.unsectioned.map((c) => c.notes)]),
+    ...modules.flatMap((m) => [...notesInSubs(m.sub_modules), ...notesInSections(m.sections), ...m.unsectioned.map((c) => c.notes)]),
+    ...notesInSubs(sub_modules),
     ...notesInSections(sections),
     ...unsectioned.map((c) => c.notes),
   ];
@@ -251,6 +273,7 @@ router.post('/import', uploadZip.single('backup'), (req, res) => {
   const sections: SectionExport[] = Array.isArray(data.sections) ? data.sections : [];
   const unsectioned: CaseExport[] = Array.isArray(data.unsectioned) ? data.unsectioned : [];
   const modules: ModuleExport[] = Array.isArray(data.modules) ? data.modules : [];
+  const rootSubModules: SubModuleExport[] = Array.isArray(data.sub_modules) ? data.sub_modules : [];
   const backupLibraryName: string | null =
     (data.library && typeof data.library.name === 'string' && data.library.name.trim()) || null;
 
@@ -262,12 +285,25 @@ router.post('/import', uploadZip.single('backup'), (req, res) => {
     }
     return null;
   };
+  // Validate one sub-module's name, sections and unsectioned pile.
+  const validateSubModules = (subs: any[], where: string): string | null => {
+    for (const sm of subs) {
+      if (!sm || typeof sm.name !== 'string' || !sm.name.trim()) return `Invalid sub-module in backup (missing name)${where}`;
+      const sErr = validateSections(Array.isArray(sm.sections) ? sm.sections : [], ` in sub-module "${sm.name}"${where}`);
+      if (sErr) return sErr;
+      if (Array.isArray(sm.unsectioned) && !sm.unsectioned.every(validCase)) return `Invalid unsectioned test case in sub-module "${sm.name}"${where}`;
+    }
+    return null;
+  };
+
   const rootErr = validateSections(sections, '');
   if (rootErr) { cleanup(); return res.status(400).json({ error: rootErr }); }
   if (!unsectioned.every(validCase)) {
     cleanup();
     return res.status(400).json({ error: 'Invalid unsectioned test case in backup' });
   }
+  const rootSubErr = validateSubModules(rootSubModules, '');
+  if (rootSubErr) { cleanup(); return res.status(400).json({ error: rootSubErr }); }
   for (const m of modules) {
     if (!m || typeof m.name !== 'string' || !m.name.trim()) {
       cleanup();
@@ -279,6 +315,8 @@ router.post('/import', uploadZip.single('backup'), (req, res) => {
       cleanup();
       return res.status(400).json({ error: `Invalid unsectioned test case in module "${m.name}"` });
     }
+    const mSubErr = validateSubModules(Array.isArray(m.sub_modules) ? m.sub_modules : [], ` in module "${m.name}"`);
+    if (mSubErr) { cleanup(); return res.status(400).json({ error: mSubErr }); }
   }
 
   // Restore images from the archive to disk (preserving basenames so note
@@ -298,33 +336,36 @@ router.post('/import', uploadZip.single('backup'), (req, res) => {
     }
   }
 
-  const insertModule = db.prepare('INSERT INTO modules (name, order_index, library_id) VALUES (?, ?, ?)');
-  const insertSection = db.prepare('INSERT INTO sections (name, order_index, color, library_id, module_id) VALUES (?, ?, ?, ?, ?)');
+  const insertModule = db.prepare('INSERT INTO modules (name, order_index, color, library_id) VALUES (?, ?, ?, ?)');
+  const insertSubModule = db.prepare('INSERT INTO sub_modules (name, order_index, color, module_id, library_id) VALUES (?, ?, ?, ?, ?)');
+  const insertSection = db.prepare('INSERT INTO sections (name, order_index, color, library_id, module_id, sub_module_id) VALUES (?, ?, ?, ?, ?, ?)');
   const insertCase = db.prepare(
-    'INSERT INTO test_cases (section_id, description, notes, order_index, library_id, module_id) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO test_cases (section_id, description, notes, order_index, library_id, module_id, sub_module_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
 
+  const colorOf = (c: unknown): string | null => (typeof c === 'string' && VALID_COLORS.has(c) ? c : null);
+
   let modulesAdded = 0;
+  let subModulesAdded = 0;
   let sectionsAdded = 0;
   let casesAdded = 0;
   let libraryId = 0;
 
-  // Insert a bucket of sections + unsectioned cases under one module (NULL =
-  // library root). `startSectionOrder`/`startUnsecOrder` let a merge into an
-  // existing root append after what's already there; freshly-created modules
-  // pass -1 (empty bucket) and start at 0.
-  const insertBucket = (secs: SectionExport[], unsec: CaseExport[], moduleId: number | null, startSectionOrder: number, startUnsecOrder: number) => {
+  // Insert a bucket of sections + unsectioned cases under one (module,
+  // sub_module) container (NULL = library root / not in that container).
+  // `startSectionOrder`/`startUnsecOrder` let a merge into an existing bucket
+  // append after what's there; freshly-created containers pass -1 (start at 0).
+  const insertBucket = (secs: SectionExport[], unsec: CaseExport[], moduleId: number | null, subModuleId: number | null, startSectionOrder: number, startUnsecOrder: number) => {
     let sectionOrder = startSectionOrder + 1;
     for (const s of secs) {
-      const color = typeof s.color === 'string' && VALID_COLORS.has(s.color) ? s.color : null;
-      const info = insertSection.run(s.name.trim(), sectionOrder++, color, libraryId, moduleId);
+      const info = insertSection.run(s.name.trim(), sectionOrder++, colorOf(s.color), libraryId, moduleId, subModuleId);
       const sectionId = Number(info.lastInsertRowid);
       sectionsAdded++;
       s.test_cases
         .slice()
         .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
         .forEach((c, i) => {
-          insertCase.run(sectionId, c.description.trim(), c.notes?.trim() || null, i, libraryId, moduleId);
+          insertCase.run(sectionId, c.description.trim(), c.notes?.trim() || null, i, libraryId, moduleId, subModuleId);
           casesAdded++;
         });
     }
@@ -333,9 +374,22 @@ router.post('/import', uploadZip.single('backup'), (req, res) => {
       .slice()
       .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
       .forEach((c) => {
-        insertCase.run(null, c.description.trim(), c.notes?.trim() || null, unsecOrder++, libraryId, moduleId);
+        insertCase.run(null, c.description.trim(), c.notes?.trim() || null, unsecOrder++, libraryId, moduleId, subModuleId);
         casesAdded++;
       });
+  };
+
+  // Insert a list of sub-modules under one module (NULL = library root), each
+  // with its own sections + unsectioned pile. Sub-modules import as NEW rows
+  // appended after any existing ones in that (library, module) bucket.
+  const insertSubModules = (subs: SubModuleExport[], moduleId: number | null) => {
+    let subOrder = ((db.prepare('SELECT MAX(order_index) as max FROM sub_modules WHERE library_id = ? AND module_id IS ?').get(libraryId, moduleId) as any)?.max ?? -1);
+    for (const sm of subs) {
+      const info = insertSubModule.run(sm.name.trim(), ++subOrder, colorOf(sm.color), moduleId, libraryId);
+      const subModuleId = Number(info.lastInsertRowid);
+      subModulesAdded++;
+      insertBucket(Array.isArray(sm.sections) ? sm.sections : [], Array.isArray(sm.unsectioned) ? sm.unsectioned : [], moduleId, subModuleId, -1, -1);
+    }
   };
 
   transaction(() => {
@@ -358,35 +412,40 @@ router.post('/import', uploadZip.single('backup'), (req, res) => {
     } else {
       libraryId = targetLibraryId!;
       if (mode === 'replace') {
-        // Cases first (test_run_items.test_case_id is ON DELETE SET NULL,
-        // so run history keeps its snapshots), then sections, then modules.
-        // Only touches rows belonging to the target library.
+        // Cases first (test_run_items.test_case_id is ON DELETE SET NULL, so
+        // run history keeps its snapshots), then sections, then sub-modules,
+        // then modules. Only touches rows belonging to the target library.
         db.prepare('DELETE FROM test_cases WHERE library_id = ?').run(libraryId);
         db.prepare('DELETE FROM sections WHERE library_id = ?').run(libraryId);
+        db.prepare('DELETE FROM sub_modules WHERE library_id = ?').run(libraryId);
         db.prepare('DELETE FROM modules WHERE library_id = ?').run(libraryId);
       }
     }
 
     // Modules always import as NEW rows appended after any existing modules —
     // merge is additive (it never dedupes sections either). A freshly-created
-    // module's sections/cases start at order 0.
+    // module's sub-modules / sections / cases start at order 0.
     let moduleOrder = ((db.prepare('SELECT MAX(order_index) as max FROM modules WHERE library_id = ?').get(libraryId) as any)?.max ?? -1);
     for (const m of modules) {
-      const info = insertModule.run(m.name.trim(), ++moduleOrder, libraryId);
+      const info = insertModule.run(m.name.trim(), ++moduleOrder, colorOf(m.color), libraryId);
       const moduleId = Number(info.lastInsertRowid);
       modulesAdded++;
-      insertBucket(m.sections ?? [], Array.isArray(m.unsectioned) ? m.unsectioned : [], moduleId, -1, -1);
+      insertSubModules(Array.isArray(m.sub_modules) ? m.sub_modules : [], moduleId);
+      insertBucket(m.sections ?? [], Array.isArray(m.unsectioned) ? m.unsectioned : [], moduleId, null, -1, -1);
     }
 
+    // Root sub-modules append after any existing root sub-modules.
+    insertSubModules(rootSubModules, null);
+
     // Root content appends after whatever already sits at the root.
-    const rootSectionMax = (db.prepare('SELECT MAX(order_index) as max FROM sections WHERE library_id = ? AND module_id IS NULL').get(libraryId) as any)?.max ?? -1;
-    const rootUnsecMax = (db.prepare('SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND module_id IS NULL AND section_id IS NULL').get(libraryId) as any)?.max ?? -1;
-    insertBucket(sections, unsectioned, null, rootSectionMax, rootUnsecMax);
+    const rootSectionMax = (db.prepare('SELECT MAX(order_index) as max FROM sections WHERE library_id = ? AND module_id IS NULL AND sub_module_id IS NULL').get(libraryId) as any)?.max ?? -1;
+    const rootUnsecMax = (db.prepare('SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND module_id IS NULL AND sub_module_id IS NULL AND section_id IS NULL').get(libraryId) as any)?.max ?? -1;
+    insertBucket(sections, unsectioned, null, null, rootSectionMax, rootUnsecMax);
   });
 
   cleanup();
   const library = db.prepare('SELECT id, name, order_index, created_at FROM libraries WHERE id = ?').get(libraryId);
-  res.json({ ok: true, mode, library, modulesAdded, sectionsAdded, casesAdded, imagesWritten });
+  res.json({ ok: true, mode, library, modulesAdded, subModulesAdded, sectionsAdded, casesAdded, imagesWritten });
 });
 
 export default router;

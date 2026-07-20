@@ -5,19 +5,24 @@ import { writeEvent, libraryById, libraryForSection } from '../eventLog';
 
 const router = Router();
 
+const MODULE_COLS = 'id, name, order_index, color, library_id, created_at';
+const SUBMODULE_COLS = 'id, name, order_index, color, module_id, library_id, created_at';
+
 // GET /?library_id=N — the library's full content tree, grouped by module.
 // Gated to runner+ (admin, editor, runner): this is library CONTENT, and a
 // runner needs it to pick cases when composing. Watchers are excluded — they
 // see runs and history only. Caller MUST specify a library.
 //
-// Shape:
+// Shape (every container level is optional; NULL parent = library root):
 //   {
-//     modules: [{ id, name, order_index, sections: SectionWithCases[], unsectioned: TestCase[] }],
-//     sections:    SectionWithCases[],   // library root (module_id IS NULL)
-//     unsectioned: TestCase[]            // library root (module_id IS NULL, section_id IS NULL)
+//     modules: [{ ...module, color,
+//                 sub_modules: [{ ...sub, color, sections[], unsectioned[] }],
+//                 sections:    SectionWithCases[],   // module-direct (sub_module_id NULL)
+//                 unsectioned: TestCase[] }],        // module-direct pile
+//     sub_modules: [ ... ],   // root sub-modules (module_id NULL)
+//     sections:    [ ... ],   // library root (module_id NULL, sub_module_id NULL)
+//     unsectioned: [ ... ]    // library root (no module, no sub-module, no section)
 //   }
-// A module is an optional container; sections/cases with module_id NULL live
-// at the root exactly as they did before modules existed.
 router.get('/', requireRole('runner'), (req, res) => {
   const libraryId = Number(req.query.library_id);
   if (!Number.isInteger(libraryId) || libraryId <= 0) {
@@ -33,27 +38,36 @@ router.get('/', requireRole('runner'), (req, res) => {
   const caseStmt = db.prepare('SELECT * FROM test_cases WHERE section_id = ? ORDER BY order_index, id');
   const withCases = (s: any) => ({ ...s, test_cases: caseStmt.all(s.id) });
 
-  const moduleUnsec = db.prepare(
-    'SELECT * FROM test_cases WHERE library_id = ? AND module_id = ? AND section_id IS NULL ORDER BY order_index, id'
+  // Unsectioned cases in a given (module, sub_module) bucket. `IS ?` matches
+  // NULL-to-NULL and value-to-value alike.
+  const unsecStmt = db.prepare(
+    'SELECT * FROM test_cases WHERE library_id = ? AND module_id IS ? AND sub_module_id IS ? AND section_id IS NULL ORDER BY order_index, id'
   );
+  const unsecFor = (moduleId: number | null, subModuleId: number | null) => unsecStmt.all(libraryId, moduleId, subModuleId);
+
+  const allSubModules = db.prepare(
+    `SELECT ${SUBMODULE_COLS} FROM sub_modules WHERE library_id = ? ORDER BY order_index, id`
+  ).all(libraryId) as any[];
+  const buildSubModule = (sm: any) => ({
+    ...sm,
+    sections: allSections.filter((s) => s.sub_module_id === sm.id).map(withCases),
+    unsectioned: unsecFor(sm.module_id ?? null, sm.id),
+  });
+
   const moduleRows = db.prepare(
-    'SELECT id, name, order_index, library_id, created_at FROM modules WHERE library_id = ? ORDER BY order_index, id'
+    `SELECT ${MODULE_COLS} FROM modules WHERE library_id = ? ORDER BY order_index, id`
   ).all(libraryId) as any[];
   const modules = moduleRows.map((m) => ({
-    id: m.id,
-    name: m.name,
-    order_index: m.order_index,
-    library_id: m.library_id,
-    created_at: m.created_at,
-    sections: allSections.filter((s) => s.module_id === m.id).map(withCases),
-    unsectioned: moduleUnsec.all(libraryId, m.id),
+    ...m,
+    sub_modules: allSubModules.filter((sm) => sm.module_id === m.id).map(buildSubModule),
+    sections: allSections.filter((s) => s.module_id === m.id && s.sub_module_id == null).map(withCases),
+    unsectioned: unsecFor(m.id, null),
   }));
 
-  const sections = allSections.filter((s) => s.module_id == null).map(withCases);
-  const unsectioned = db.prepare(
-    'SELECT * FROM test_cases WHERE library_id = ? AND module_id IS NULL AND section_id IS NULL ORDER BY order_index, id'
-  ).all(libraryId);
-  res.json({ modules, sections, unsectioned });
+  const sub_modules = allSubModules.filter((sm) => sm.module_id == null).map(buildSubModule);
+  const sections = allSections.filter((s) => s.module_id == null && s.sub_module_id == null).map(withCases);
+  const unsectioned = unsecFor(null, null);
+  res.json({ modules, sub_modules, sections, unsectioned });
 });
 
 // Everything below requires editor+. Anyone authenticated can still list above.
@@ -73,44 +87,67 @@ function moduleInLibrary(moduleId: number | null, libraryId: number): boolean {
   return !!db.prepare('SELECT 1 FROM modules WHERE id = ? AND library_id = ?').get(moduleId, libraryId);
 }
 
+// A sub-module's (library_id, module_id) — used to derive a section's module
+// from its sub-module (the invariant: section.module_id === subModule.module_id).
+function subModuleInfo(subModuleId: number): { library_id: number; module_id: number | null } | null {
+  const r = db.prepare('SELECT library_id, module_id FROM sub_modules WHERE id = ?').get(subModuleId) as any;
+  return r ? { library_id: r.library_id, module_id: r.module_id ?? null } : null;
+}
+
+// Resolve the (module_id, sub_module_id) a section should carry. A sub-module,
+// when given, derives the module; otherwise a bare module_id is validated.
+// Returns an error string or the resolved pair.
+function resolveSectionPlacement(
+  libraryId: number,
+  moduleIdRaw: number | null,
+  subModuleIdRaw: number | null,
+): { module_id: number | null; sub_module_id: number | null } | { error: string } {
+  if (subModuleIdRaw !== null) {
+    const sm = subModuleInfo(subModuleIdRaw);
+    if (!sm || sm.library_id !== libraryId) return { error: 'sub_module_id belongs to a different library' };
+    return { module_id: sm.module_id, sub_module_id: subModuleIdRaw };
+  }
+  if (!moduleInLibrary(moduleIdRaw, libraryId)) return { error: 'module_id belongs to a different library' };
+  return { module_id: moduleIdRaw, sub_module_id: null };
+}
+
 router.post('/', (req, res) => {
-  const { name, color, after_id, library_id, module_id } = req.body ?? {};
+  const { name, color, after_id, library_id, module_id, sub_module_id } = req.body ?? {};
   if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
   const libraryId = Number(library_id);
   if (!Number.isInteger(libraryId) || !requireLibrary(libraryId)) {
     return res.status(400).json({ error: 'Valid library_id required' });
   }
-  const moduleId = module_id ?? null;
-  if (!moduleInLibrary(moduleId, libraryId)) {
-    return res.status(400).json({ error: 'module_id belongs to a different library' });
-  }
+  const placed = resolveSectionPlacement(libraryId, module_id ?? null, sub_module_id ?? null);
+  if ('error' in placed) return res.status(400).json({ error: placed.error });
+  const { module_id: moduleId, sub_module_id: subModuleId } = placed;
 
   try {
     let sectionId = 0;
     transaction(() => {
-      // order_index is scoped to the (library, module) bucket — sections in a
-      // module order independently of root sections. `module_id IS ?` matches
+      // order_index is scoped to the (library, module, sub_module) bucket —
+      // sections order independently within each container. `IS ?` matches
       // NULL-to-NULL and value-to-value alike.
       let order_index: number;
       if (after_id != null) {
-        const after = db.prepare('SELECT order_index FROM sections WHERE id = ? AND library_id = ? AND module_id IS ?').get(after_id, libraryId, moduleId) as any;
+        const after = db.prepare('SELECT order_index FROM sections WHERE id = ? AND library_id = ? AND module_id IS ? AND sub_module_id IS ?').get(after_id, libraryId, moduleId, subModuleId) as any;
         if (!after) throw new Error('SECTION_NOT_FOUND');
         order_index = after.order_index + 1;
-        db.prepare('UPDATE sections SET order_index = order_index + 1 WHERE library_id = ? AND module_id IS ? AND order_index >= ?').run(libraryId, moduleId, order_index);
+        db.prepare('UPDATE sections SET order_index = order_index + 1 WHERE library_id = ? AND module_id IS ? AND sub_module_id IS ? AND order_index >= ?').run(libraryId, moduleId, subModuleId, order_index);
       } else {
-        const maxOrder = db.prepare('SELECT MAX(order_index) as max FROM sections WHERE library_id = ? AND module_id IS ?').get(libraryId, moduleId) as any;
+        const maxOrder = db.prepare('SELECT MAX(order_index) as max FROM sections WHERE library_id = ? AND module_id IS ? AND sub_module_id IS ?').get(libraryId, moduleId, subModuleId) as any;
         order_index = (maxOrder?.max ?? -1) + 1;
       }
       const result = db.prepare(
-        'INSERT INTO sections (name, order_index, color, library_id, module_id) VALUES (?, ?, ?, ?, ?)'
-      ).run(name.trim(), order_index, normalizeColor(color), libraryId, moduleId);
+        'INSERT INTO sections (name, order_index, color, library_id, module_id, sub_module_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(name.trim(), order_index, normalizeColor(color), libraryId, moduleId, subModuleId);
       sectionId = Number(result.lastInsertRowid);
     });
     const section = db.prepare('SELECT * FROM sections WHERE id = ?').get(sectionId) as any;
     writeEvent({ eventType: 'edit', actor: req.user!.username, library: libraryById(libraryId) });
     res.status(201).json({ ...section, test_cases: [] });
   } catch (e: any) {
-    if (e?.message === 'SECTION_NOT_FOUND') return res.status(404).json({ error: 'after_id section not found in this module' });
+    if (e?.message === 'SECTION_NOT_FOUND') return res.status(404).json({ error: 'after_id section not found in this container' });
     throw e;
   }
 });
@@ -147,31 +184,32 @@ router.post('/bulk-delete', (req, res) => {
   transaction(() => {
     const first = db.prepare('SELECT library_id FROM sections WHERE id = ?').get((ids as number[])[0]) as any;
     const libraryId = first?.library_id as number | undefined;
-    // Freed cases, tagged with the module bucket they'll fall into.
-    const freed: { id: number; moduleId: number | null }[] = [];
+    // Freed cases, tagged with the (module, sub_module) bucket they fall into.
+    const freed: { id: number; moduleId: number | null; subModuleId: number | null }[] = [];
     if (libraryId != null) {
       const placeholders = (ids as number[]).map(() => '?').join(',');
       const secRows = db.prepare(
-        `SELECT id, module_id FROM sections WHERE id IN (${placeholders}) ORDER BY order_index, id`
+        `SELECT id, module_id, sub_module_id FROM sections WHERE id IN (${placeholders}) ORDER BY order_index, id`
       ).all(...(ids as number[])) as any[];
       const caseStmt = db.prepare('SELECT id FROM test_cases WHERE section_id = ? ORDER BY order_index, id');
-      for (const s of secRows) for (const c of caseStmt.all(s.id) as any[]) freed.push({ id: c.id, moduleId: s.module_id ?? null });
+      for (const s of secRows) for (const c of caseStmt.all(s.id) as any[]) freed.push({ id: c.id, moduleId: s.module_id ?? null, subModuleId: s.sub_module_id ?? null });
     }
+    const bucketKey = (m: number | null, sm: number | null) => `${m === null ? 'null' : m}:${sm === null ? 'null' : sm}`;
     // Read each touched bucket's current max BEFORE deleting.
     const bucketMax = new Map<string, number>();
     if (libraryId != null) {
       const maxStmt = db.prepare(
-        'SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND module_id IS ? AND section_id IS NULL'
+        'SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND module_id IS ? AND sub_module_id IS ? AND section_id IS NULL'
       );
       for (const f of freed) {
-        const key = f.moduleId === null ? 'null' : String(f.moduleId);
-        if (!bucketMax.has(key)) bucketMax.set(key, ((maxStmt.get(libraryId, f.moduleId)) as any)?.max ?? -1);
+        const key = bucketKey(f.moduleId, f.subModuleId);
+        if (!bucketMax.has(key)) bucketMax.set(key, ((maxStmt.get(libraryId, f.moduleId, f.subModuleId)) as any)?.max ?? -1);
       }
     }
     for (const id of ids as number[]) deleted += Number(del.run(id).changes);
     const upd = db.prepare('UPDATE test_cases SET order_index = ? WHERE id = ?');
     for (const f of freed) {
-      const key = f.moduleId === null ? 'null' : String(f.moduleId);
+      const key = bucketKey(f.moduleId, f.subModuleId);
       const next = (bucketMax.get(key) ?? -1) + 1;
       bucketMax.set(key, next);
       upd.run(next, f.id);
@@ -181,24 +219,24 @@ router.post('/bulk-delete', (req, res) => {
   res.json({ ok: true, deleted });
 });
 
-// Move whole sections (with their cases) into another module, or to the
-// library root (module_id = null). Cascades module_id onto each section's
-// cases to keep the invariant. Moved sections append to the end of the
-// destination module's section order, preserving their relative order.
+// Move whole sections (with their cases) into a target container — a module, a
+// sub-module, or the library root. A sub_module_id derives the module. Cascades
+// module_id AND sub_module_id onto each section's cases to keep the invariant.
+// Moved sections append to the end of the destination (library, module,
+// sub_module) order, preserving their relative order.
 router.post('/move-module', (req, res) => {
-  const { ids, library_id, module_id } = req.body ?? {};
+  const { ids, library_id, module_id, sub_module_id } = req.body ?? {};
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array required' });
   const libraryId = Number(library_id);
   if (!Number.isInteger(libraryId) || !requireLibrary(libraryId)) {
     return res.status(400).json({ error: 'Valid library_id required' });
   }
-  const moduleId = module_id ?? null;
-  if (!moduleInLibrary(moduleId, libraryId)) {
-    return res.status(400).json({ error: 'module_id belongs to a different library' });
-  }
+  const placed = resolveSectionPlacement(libraryId, module_id ?? null, sub_module_id ?? null);
+  if ('error' in placed) return res.status(400).json({ error: placed.error });
+  const { module_id: moduleId, sub_module_id: subModuleId } = placed;
 
-  const updSection = db.prepare('UPDATE sections SET module_id = ?, order_index = ? WHERE id = ? AND library_id = ?');
-  const updCases = db.prepare('UPDATE test_cases SET module_id = ? WHERE section_id = ?');
+  const updSection = db.prepare('UPDATE sections SET module_id = ?, sub_module_id = ?, order_index = ? WHERE id = ? AND library_id = ?');
+  const updCases = db.prepare('UPDATE test_cases SET module_id = ?, sub_module_id = ? WHERE section_id = ?');
   let moved = 0;
   transaction(() => {
     // Preserve the relative order of the moved sections.
@@ -206,10 +244,10 @@ router.post('/move-module', (req, res) => {
     const ordered = db.prepare(
       `SELECT id FROM sections WHERE id IN (${placeholders}) AND library_id = ? ORDER BY order_index, id`
     ).all(...(ids as number[]), libraryId) as any[];
-    let order = ((db.prepare('SELECT MAX(order_index) as max FROM sections WHERE library_id = ? AND module_id IS ?').get(libraryId, moduleId)) as any)?.max ?? -1;
+    let order = ((db.prepare('SELECT MAX(order_index) as max FROM sections WHERE library_id = ? AND module_id IS ? AND sub_module_id IS ?').get(libraryId, moduleId, subModuleId)) as any)?.max ?? -1;
     for (const s of ordered) {
-      moved += Number(updSection.run(moduleId, ++order, s.id, libraryId).changes);
-      updCases.run(moduleId, s.id);
+      moved += Number(updSection.run(moduleId, subModuleId, ++order, s.id, libraryId).changes);
+      updCases.run(moduleId, subModuleId, s.id);
     }
   });
   writeEvent({ eventType: 'edit', actor: req.user!.username, library: libraryById(libraryId) });
@@ -225,7 +263,7 @@ router.post('/merge', (req, res) => {
   if (!Array.isArray(source_ids) || source_ids.length === 0) return res.status(400).json({ error: 'source_ids array required' });
   if (target_id == null) return res.status(400).json({ error: 'target_id required' });
 
-  const target = db.prepare('SELECT library_id, module_id FROM sections WHERE id = ?').get(target_id) as any;
+  const target = db.prepare('SELECT library_id, module_id, sub_module_id FROM sections WHERE id = ?').get(target_id) as any;
   if (!target) return res.status(404).json({ error: 'Target section not found' });
 
   const sources = (source_ids as number[]).filter((id) => id !== target_id);
@@ -233,10 +271,10 @@ router.post('/merge', (req, res) => {
 
   const placeholders = sources.map(() => '?').join(',');
   const misfits = db.prepare(
-    `SELECT id FROM sections WHERE id IN (${placeholders}) AND (library_id != ? OR module_id IS NOT ?)`
-  ).all(...sources, target.library_id, target.module_id ?? null) as any[];
+    `SELECT id FROM sections WHERE id IN (${placeholders}) AND (library_id != ? OR module_id IS NOT ? OR sub_module_id IS NOT ?)`
+  ).all(...sources, target.library_id, target.module_id ?? null, target.sub_module_id ?? null) as any[];
   if (misfits.length > 0) {
-    return res.status(400).json({ error: 'All sections in a merge must belong to the same library and module.' });
+    return res.status(400).json({ error: 'All sections in a merge must belong to the same library, module and sub-module.' });
   }
 
   const moveCase = db.prepare('UPDATE test_cases SET section_id = ?, order_index = ? WHERE id = ?');
@@ -278,19 +316,19 @@ router.put('/:id', (req, res) => {
 router.delete('/:id', (req, res) => {
   const sectionId = Number(req.params.id);
   const library = libraryForSection(req.params.id);
-  const section = db.prepare('SELECT library_id, module_id FROM sections WHERE id = ?').get(sectionId) as any;
+  const section = db.prepare('SELECT library_id, module_id, sub_module_id FROM sections WHERE id = ?').get(sectionId) as any;
   if (!section) return res.status(404).json({ error: 'Not found' });
 
-  // Freed cases fall back to unsectioned within the SAME module (module_id is
-  // unchanged; only section_id → NULL). Renumber them to the end of that
-  // module's unsectioned pile. maxOrder is read BEFORE the delete.
+  // Freed cases fall back to unsectioned within the SAME (module, sub_module)
+  // bucket (module_id + sub_module_id unchanged; only section_id → NULL).
+  // Renumber them to the end of that bucket's pile. maxOrder read BEFORE delete.
   transaction(() => {
     const cases = db.prepare(
       'SELECT id FROM test_cases WHERE section_id = ? ORDER BY order_index, id'
     ).all(sectionId) as any[];
     let maxOrder = ((db.prepare(
-      'SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND module_id IS ? AND section_id IS NULL'
-    ).get(section.library_id, section.module_id ?? null)) as any)?.max ?? -1;
+      'SELECT MAX(order_index) as max FROM test_cases WHERE library_id = ? AND module_id IS ? AND sub_module_id IS ? AND section_id IS NULL'
+    ).get(section.library_id, section.module_id ?? null, section.sub_module_id ?? null)) as any)?.max ?? -1;
     db.prepare('DELETE FROM sections WHERE id = ?').run(sectionId);
     const upd = db.prepare('UPDATE test_cases SET order_index = ? WHERE id = ?');
     for (const c of cases) upd.run(++maxOrder, c.id);

@@ -41,10 +41,13 @@ export default function ActiveTestRun() {
   const canRun = user?.role === 'editor' || user?.role === 'runner';
   const isOwner = run?.runner_name === user?.username;
   const canMark = canRun && isOwner;
-  // section name → color, looked up from the live sections list so the tint a
-  // user picks in Edit Mode is reflected here (matched by name; if a section
-  // is renamed the group falls back to no tint until re-picked).
+  // container name → color, looked up from the live tree so the tints picked in
+  // Edit Mode are reflected here (matched by name; a rename falls back to no
+  // tint until re-picked). Separate maps per level so a section and a module of
+  // the same name don't collide.
   const [colorByName, setColorByName] = useState<Map<string, SectionColor | null>>(new Map());
+  const [moduleColorByName, setModuleColorByName] = useState<Map<string, SectionColor | null>>(new Map());
+  const [subColorByName, setSubColorByName] = useState<Map<string, SectionColor | null>>(new Map());
 
   const fetchRun = useCallback(async () => {
     if (!id) return;
@@ -78,8 +81,21 @@ export default function ActiveTestRun() {
   useEffect(() => {
     if (!run) return;
     if (user?.role === 'watcher') return;
-    api.sections.list(run.library_id).then(({ sections }) => {
-      setColorByName(new Map(sections.map((s) => [s.name, s.color])));
+    api.sections.list(run.library_id).then(({ modules, sub_modules, sections }) => {
+      const secMap = new Map<string, SectionColor | null>();
+      const modMap = new Map<string, SectionColor | null>();
+      const subMap = new Map<string, SectionColor | null>();
+      const addSecs = (secs: { name: string; color: SectionColor | null }[]) => secs.forEach((s) => secMap.set(s.name, s.color));
+      for (const m of modules) {
+        modMap.set(m.name, m.color);
+        for (const sm of m.sub_modules) { subMap.set(sm.name, sm.color); addSecs(sm.sections); }
+        addSecs(m.sections);
+      }
+      for (const sm of sub_modules) { subMap.set(sm.name, sm.color); addSecs(sm.sections); }
+      addSecs(sections);
+      setColorByName(secMap);
+      setModuleColorByName(modMap);
+      setSubColorByName(subMap);
     }).catch(() => { /* fall back to no colors */ });
   }, [run?.library_id, user?.role]);
 
@@ -242,10 +258,10 @@ export default function ActiveTestRun() {
           </div>
         </div>
 
-        {/* Test cases — grouped by module → section */}
+        {/* Test cases — grouped by module → sub-module → section */}
         <div className="space-y-3">
           {blocks.map((block, bi) => {
-            const sectionCards = block.sections.map(({ sectionName, items }) => {
+            const renderSectionCard = ({ sectionName, items }: { sectionName: string; items: TestRunItem[] }) => {
               const color = colorByName.get(sectionName) ?? null;
               const tintClass = color ? ` section-tint-${color}` : '';
               return (
@@ -307,14 +323,30 @@ export default function ActiveTestRun() {
                 </div>
               </div>
               );
+            };
+
+            // Each sub-module block: bare sections (null name) or a sub-module shell.
+            const subBlocks = block.subModules.map((sub, si) => {
+              const cards = sub.sections.map(renderSectionCard);
+              if (sub.subModuleName === null) return <div key={`sub-${bi}-${si}`} className="space-y-3">{cards}</div>;
+              const subColor = subColorByName.get(sub.subModuleName) ?? null;
+              const subTint = subColor ? `section-tint-${subColor}` : 'submodule-header-plain';
+              return (
+                <div key={`sub-${bi}-${si}`} className="submodule-shell overflow-hidden">
+                  <div className={`submodule-header px-4 py-2 text-sm font-semibold ${subTint}`}>{sub.subModuleName}</div>
+                  <div className="p-3 space-y-3">{cards}</div>
+                </div>
+              );
             });
 
             // Library-root content renders without a module wrapper.
-            if (block.moduleName === null) return <div key={`root-${bi}`} className="space-y-3">{sectionCards}</div>;
+            if (block.moduleName === null) return <div key={`root-${bi}`} className="space-y-3">{subBlocks}</div>;
+            const modColor = moduleColorByName.get(block.moduleName) ?? null;
+            const modTint = modColor ? `section-tint-${modColor}` : 'module-header-plain';
             return (
               <div key={`mod-${bi}`} className="module-shell overflow-hidden">
-                <div className="module-header px-4 py-2.5 text-sm font-bold tracking-wide">{block.moduleName}</div>
-                <div className="p-3 space-y-3">{sectionCards}</div>
+                <div className={`module-header px-4 py-2.5 text-sm font-bold tracking-wide ${modTint}`}>{block.moduleName}</div>
+                <div className="p-3 space-y-3">{subBlocks}</div>
               </div>
             );
           })}

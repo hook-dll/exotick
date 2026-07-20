@@ -7,6 +7,9 @@ export interface Section {
   color: SectionColor | null;
   // Module the section lives in; null = library root (no module).
   module_id: number | null;
+  // Sub-module the section lives in; null = not in a sub-module. When set, the
+  // section's module_id equals the sub-module's module_id (server invariant).
+  sub_module_id: number | null;
   test_cases: TestCase[];
 }
 
@@ -19,22 +22,47 @@ export interface TestCase {
   // Module the case lives in; null = library root. For a sectioned case this
   // always mirrors its section's module_id (server-enforced invariant).
   module_id: number | null;
+  // Sub-module the case lives in; null = not in a sub-module. Mirrors its
+  // section's sub_module_id for a sectioned case.
+  sub_module_id: number | null;
 }
 
-// A module is an optional container inside a library that groups sections +
-// unsectioned cases. Nested shape as returned by GET /api/sections.
-export interface Module {
+// A sub-module is an optional container one level below a module and one above a
+// section (library → module → sub-module → section → case). Nested shape as
+// returned by GET /api/sections.
+export interface SubModule {
   id: number;
   name: string;
   order_index: number;
+  color: SectionColor | null;
+  // Parent module; null = the sub-module sits at the library root.
+  module_id: number | null;
+  library_id: number;
+  created_at: string;
   sections: Section[];
   unsectioned: TestCase[];
 }
 
-// Full content tree of one library. `modules` come first; `sections` /
-// `unsectioned` are the library-root content that sits outside any module.
+// A module is an optional container inside a library that groups sub-modules,
+// sections + unsectioned cases. Nested shape as returned by GET /api/sections.
+export interface Module {
+  id: number;
+  name: string;
+  order_index: number;
+  color: SectionColor | null;
+  library_id: number;
+  created_at: string;
+  sub_modules: SubModule[];
+  sections: Section[];
+  unsectioned: TestCase[];
+}
+
+// Full content tree of one library. `modules` come first; `sub_modules` /
+// `sections` / `unsectioned` are the library-root content that sits outside any
+// module.
 export interface LibraryContent {
   modules: Module[];
+  sub_modules: SubModule[];
   sections: Section[];
   unsectioned: TestCase[];
 }
@@ -44,6 +72,18 @@ export interface ModuleSummary {
   id: number;
   name: string;
   order_index: number;
+  color: SectionColor | null;
+  library_id: number;
+  created_at: string;
+}
+
+// Flat sub-module row (GET /api/sub-modules, POST /api/sub-modules).
+export interface SubModuleSummary {
+  id: number;
+  name: string;
+  order_index: number;
+  color: SectionColor | null;
+  module_id: number | null;
   library_id: number;
   created_at: string;
 }
@@ -83,6 +123,8 @@ export interface TestRunItem {
   snapshot_description: string;
   snapshot_notes: string | null;
   snapshot_section_name: string | null;
+  // Sub-module the case belonged to at compose time; null = not in a sub-module.
+  snapshot_sub_module_name: string | null;
   // Module the case belonged to at compose time; null = library root.
   snapshot_module_name: string | null;
   order_index: number;

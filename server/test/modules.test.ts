@@ -21,6 +21,7 @@ before(async () => {
   const express = (await import('express')).default;
   const librariesRouter = (await import('../src/routes/libraries')).default;
   const modulesRouter = (await import('../src/routes/modules')).default;
+  const subModulesRouter = (await import('../src/routes/subModules')).default;
   const sectionsRouter = (await import('../src/routes/sections')).default;
   const testCasesRouter = (await import('../src/routes/testCases')).default;
   const testRunsRouter = (await import('../src/routes/testRuns')).default;
@@ -35,6 +36,7 @@ before(async () => {
   });
   app.use('/api/libraries', librariesRouter);
   app.use('/api/modules', modulesRouter);
+  app.use('/api/sub-modules', subModulesRouter);
   app.use('/api/sections', sectionsRouter);
   app.use('/api/test-cases', testCasesRouter);
   app.use('/api/test-runs', testRunsRouter);
@@ -244,7 +246,7 @@ test('backup round-trip preserves modules; replace clears them', async () => {
   const zipBytes = new Uint8Array(await zipRes.arrayBuffer());
   const entries = unzipSync(zipBytes);
   const manifest = JSON.parse(strFromU8(entries['backup.json']));
-  assert.equal(manifest.version, 4);
+  assert.equal(manifest.version, 5);
   assert.equal(manifest.modules.length, 1);
   assert.equal(manifest.modules[0].name, 'Reporting');
   assert.equal(manifest.modules[0].sections[0].test_cases[0].description, 'renders chart');
@@ -290,4 +292,196 @@ test('test-cases PDF export renders with modules (smoke)', async () => {
   assert.equal(res.status, 200);
   const buf = Buffer.from(await res.arrayBuffer());
   assert.equal(buf.subarray(0, 4).toString('latin1'), '%PDF');
+});
+
+// ── Sub-module layer (library → module → sub-module → section → case) ─────────
+
+test('sub-module CRUD + delete returns content to the parent module', async () => {
+  const lib = await newLibrary('Sub CRUD lib');
+  const mod = (await j('POST', '/api/modules', { name: 'M', library_id: lib })).body;
+  const sm1 = (await j('POST', '/api/sub-modules', { name: 'Sign-in', library_id: lib, module_id: mod.id, color: 'green' })).body;
+  const sm2 = (await j('POST', '/api/sub-modules', { name: 'Sign-out', library_id: lib, module_id: mod.id })).body;
+  assert.ok(sm1.id && sm2.id);
+  assert.equal(sm1.color, 'green');
+
+  // List (runner+) returns them in order, scoped to the module bucket.
+  let list = (await j('GET', `/api/sub-modules?library_id=${lib}`, undefined, 'runner')).body.subModules;
+  assert.deepEqual(list.filter((s: any) => s.module_id === mod.id).map((s: any) => s.name), ['Sign-in', 'Sign-out']);
+
+  // Reorder + rename + recolor.
+  await j('PUT', '/api/sub-modules/reorder', { ids: [sm2.id, sm1.id], library_id: lib });
+  await j('PUT', `/api/sub-modules/${sm1.id}`, { name: 'Auth', color: 'blue' });
+  list = (await j('GET', `/api/sub-modules?library_id=${lib}`)).body.subModules;
+  const renamed = list.find((s: any) => s.id === sm1.id);
+  assert.equal(renamed.name, 'Auth');
+  assert.equal(renamed.color, 'blue');
+
+  // Put a section + case inside sm1, then delete sm1 — content survives in the
+  // parent module (module_id kept, sub_module_id → NULL).
+  const sec = (await j('POST', '/api/sections', { name: 'Login', library_id: lib, sub_module_id: sm1.id })).body;
+  assert.equal(sec.module_id, mod.id);
+  assert.equal(sec.sub_module_id, sm1.id);
+  await j('POST', '/api/test-cases', { description: 'sub loose', library_id: lib, sub_module_id: sm1.id });
+  const del = await j('DELETE', `/api/sub-modules/${sm1.id}`);
+  assert.equal(del.status, 204);
+
+  const tree = (await j('GET', `/api/sections?library_id=${lib}`)).body;
+  const mtree = tree.modules.find((m: any) => m.id === mod.id);
+  assert.ok(mtree.sections.find((s: any) => s.id === sec.id && s.sub_module_id == null && s.module_id === mod.id));
+  assert.ok(mtree.unsectioned.find((c: any) => c.description === 'sub loose'));
+});
+
+test('GET /sections nests module → sub-module → section', async () => {
+  const lib = await newLibrary('Sub tree lib');
+  const mod = (await j('POST', '/api/modules', { name: 'Mod', library_id: lib })).body;
+  const sm = (await j('POST', '/api/sub-modules', { name: 'Sub', library_id: lib, module_id: mod.id })).body;
+  const secInSub = (await j('POST', '/api/sections', { name: 'In sub', library_id: lib, sub_module_id: sm.id })).body;
+  await j('POST', '/api/test-cases', { description: 'deep case', library_id: lib, section_id: secInSub.id });
+  await j('POST', '/api/test-cases', { description: 'sub unsectioned', library_id: lib, sub_module_id: sm.id });
+  // A root sub-module too.
+  const rootSub = (await j('POST', '/api/sub-modules', { name: 'Root sub', library_id: lib })).body;
+  await j('POST', '/api/sections', { name: 'Root sub sec', library_id: lib, sub_module_id: rootSub.id });
+
+  const tree = (await j('GET', `/api/sections?library_id=${lib}`)).body;
+  assert.equal(tree.modules.length, 1);
+  const mtree = tree.modules[0];
+  assert.equal(mtree.sub_modules.length, 1);
+  const smtree = mtree.sub_modules[0];
+  assert.equal(smtree.id, sm.id);
+  assert.equal(smtree.sections[0].test_cases[0].description, 'deep case');
+  assert.equal(smtree.unsectioned[0].description, 'sub unsectioned');
+  assert.equal(tree.sub_modules.length, 1);
+  assert.equal(tree.sub_modules[0].id, rootSub.id);
+  assert.equal(tree.sub_modules[0].sections[0].name, 'Root sub sec');
+});
+
+test('sectioned case inherits its section sub-module + module (invariant)', async () => {
+  const lib = await newLibrary('Sub invariant lib');
+  const mod = (await j('POST', '/api/modules', { name: 'M', library_id: lib })).body;
+  const sm = (await j('POST', '/api/sub-modules', { name: 'S', library_id: lib, module_id: mod.id })).body;
+  const sec = (await j('POST', '/api/sections', { name: 'Sec', library_id: lib, sub_module_id: sm.id })).body;
+  // Even with bogus ids sent, a sectioned case takes the section's chain.
+  const tc = (await j('POST', '/api/test-cases', { description: 'x', library_id: lib, section_id: sec.id, module_id: 99999, sub_module_id: 88888 })).body;
+  assert.equal(tc.module_id, mod.id);
+  assert.equal(tc.sub_module_id, sm.id);
+});
+
+test('move sub-modules into a module cascades module_id onto their content', async () => {
+  const lib = await newLibrary('Sub move lib');
+  const mod = (await j('POST', '/api/modules', { name: 'Target', library_id: lib })).body;
+  const sm = (await j('POST', '/api/sub-modules', { name: 'Root sub', library_id: lib })).body; // at root
+  const sec = (await j('POST', '/api/sections', { name: 'Sec', library_id: lib, sub_module_id: sm.id })).body;
+  const tc = (await j('POST', '/api/test-cases', { description: 'moves', library_id: lib, section_id: sec.id })).body;
+  assert.equal(tc.module_id, null);
+
+  const mv = await j('POST', '/api/sub-modules/move-module', { ids: [sm.id], library_id: lib, module_id: mod.id });
+  assert.equal(mv.status, 200);
+  assert.equal(mv.body.moved, 1);
+
+  const tree = (await j('GET', `/api/sections?library_id=${lib}`)).body;
+  const mtree = tree.modules.find((m: any) => m.id === mod.id);
+  assert.equal(mtree.sub_modules.length, 1);
+  assert.equal(mtree.sub_modules[0].sections[0].test_cases[0].id, tc.id);
+  assert.equal(mtree.sub_modules[0].sections[0].test_cases[0].module_id, mod.id);
+  assert.equal(tree.sub_modules.length, 0);
+});
+
+test('compose snapshots the sub-module name and orders module → sub → section', async () => {
+  const lib = await newLibrary('Sub run lib');
+  const mod = (await j('POST', '/api/modules', { name: 'Core', library_id: lib })).body;
+  const sm = (await j('POST', '/api/sub-modules', { name: 'Sign-in', library_id: lib, module_id: mod.id })).body;
+  const secInSub = (await j('POST', '/api/sections', { name: 'Flows', library_id: lib, sub_module_id: sm.id })).body;
+  const subCase = (await j('POST', '/api/test-cases', { description: 'in sub', library_id: lib, section_id: secInSub.id })).body;
+  const rootCase = (await j('POST', '/api/test-cases', { description: 'at root', library_id: lib })).body;
+
+  const run = await j('POST', '/api/test-runs', { name: 'R', runner_name: 'tester', case_ids: [rootCase.id, subCase.id] });
+  assert.equal(run.status, 201, JSON.stringify(run.body));
+  const full = (await j('GET', `/api/test-runs/${run.body.id}`)).body;
+  assert.equal(full.items[0].snapshot_module_name, 'Core');
+  assert.equal(full.items[0].snapshot_sub_module_name, 'Sign-in');
+  assert.equal(full.items[0].snapshot_section_name, 'Flows');
+  assert.equal(full.items[0].snapshot_description, 'in sub');
+  assert.equal(full.items[1].snapshot_module_name, null);
+  assert.equal(full.items[1].snapshot_sub_module_name, null);
+  assert.equal(full.items[1].snapshot_description, 'at root');
+});
+
+test('backup v5 round-trip preserves sub-modules; replace clears them', async () => {
+  const lib = await newLibrary('Sub backup src');
+  const mod = (await j('POST', '/api/modules', { name: 'Reporting', library_id: lib, color: 'purple' })).body;
+  const sm = (await j('POST', '/api/sub-modules', { name: 'Charts', library_id: lib, module_id: mod.id, color: 'orange' })).body;
+  const sec = (await j('POST', '/api/sections', { name: 'Dashboards', library_id: lib, sub_module_id: sm.id })).body;
+  await j('POST', '/api/test-cases', { description: 'renders chart', library_id: lib, section_id: sec.id });
+  await j('POST', '/api/test-cases', { description: 'sub loose', library_id: lib, sub_module_id: sm.id });
+
+  const zipRes = await fetch(`${base}/api/backup/export?library_id=${lib}`, { headers: { 'x-test-role': 'admin' } });
+  const zipBytes = new Uint8Array(await zipRes.arrayBuffer());
+  const manifest = JSON.parse(strFromU8(unzipSync(zipBytes)['backup.json']));
+  assert.equal(manifest.version, 5);
+  assert.equal(manifest.modules[0].color, 'purple');
+  assert.equal(manifest.modules[0].sub_modules.length, 1);
+  assert.equal(manifest.modules[0].sub_modules[0].name, 'Charts');
+  assert.equal(manifest.modules[0].sub_modules[0].color, 'orange');
+  assert.equal(manifest.modules[0].sub_modules[0].sections[0].test_cases[0].description, 'renders chart');
+  assert.equal(manifest.modules[0].sub_modules[0].unsectioned[0].description, 'sub loose');
+
+  const form = new FormData();
+  form.append('mode', 'new');
+  form.append('name', 'Sub restored');
+  form.append('backup', new Blob([zipBytes], { type: 'application/zip' }), 'b.zip');
+  const imp = await fetch(`${base}/api/backup/import`, { method: 'POST', headers: { 'x-test-role': 'admin' }, body: form });
+  const impBody = await imp.json();
+  assert.equal(imp.status, 200, JSON.stringify(impBody));
+  assert.equal(impBody.subModulesAdded, 1);
+
+  const restored = (await j('GET', `/api/sections?library_id=${impBody.library.id}`)).body;
+  assert.equal(restored.modules[0].sub_modules[0].name, 'Charts');
+  assert.equal(restored.modules[0].sub_modules[0].color, 'orange');
+  assert.equal(restored.modules[0].sub_modules[0].sections[0].test_cases[0].description, 'renders chart');
+
+  // Replace with an empty backup wipes the sub-module too.
+  const emptyLib = await newLibrary('Sub empty');
+  const emptyBytes = new Uint8Array(await (await fetch(`${base}/api/backup/export?library_id=${emptyLib}`, { headers: { 'x-test-role': 'admin' } })).arrayBuffer());
+  const form2 = new FormData();
+  form2.append('mode', 'replace');
+  form2.append('target_library_id', String(impBody.library.id));
+  form2.append('backup', new Blob([emptyBytes], { type: 'application/zip' }), 'e.zip');
+  await fetch(`${base}/api/backup/import`, { method: 'POST', headers: { 'x-test-role': 'admin' }, body: form2 });
+  const afterReplace = (await j('GET', `/api/sections?library_id=${impBody.library.id}`)).body;
+  assert.equal(afterReplace.modules.length, 0);
+  assert.equal(afterReplace.sub_modules.length, 0);
+});
+
+test('bulk-copy carries a whole module incl. sub-modules to another library', async () => {
+  const src = await newLibrary('Deep copy src');
+  const dst = await newLibrary('Deep copy dst');
+  const mod = (await j('POST', '/api/modules', { name: 'Auth', library_id: src })).body;
+  const sm = (await j('POST', '/api/sub-modules', { name: 'Sign-in', library_id: src, module_id: mod.id, color: 'green' })).body;
+  const sec = (await j('POST', '/api/sections', { name: 'Login', library_id: src, sub_module_id: sm.id, color: 'blue' })).body;
+  const cSec = (await j('POST', '/api/test-cases', { description: 'signs in', library_id: src, section_id: sec.id })).body;
+  const cUn = (await j('POST', '/api/test-cases', { description: 'sub loose', library_id: src, sub_module_id: sm.id })).body;
+
+  const copy = await j('POST', '/api/test-cases/bulk-copy', {
+    target_library_id: dst,
+    module_ids: [mod.id],
+    sub_module_ids: [sm.id],
+    section_ids: [sec.id],
+    case_ids: [cSec.id, cUn.id],
+  });
+  assert.equal(copy.status, 201, JSON.stringify(copy.body));
+  assert.equal(copy.body.modulesCreated, 1);
+  assert.equal(copy.body.subModulesCreated, 1);
+  assert.equal(copy.body.sectionsCreated, 1);
+  assert.equal(copy.body.copiedCases, 2);
+
+  const tree = (await j('GET', `/api/sections?library_id=${dst}`)).body;
+  const mtree = tree.modules[0];
+  assert.equal(mtree.name, 'Auth');
+  const smtree = mtree.sub_modules[0];
+  assert.equal(smtree.name, 'Sign-in');
+  assert.equal(smtree.color, 'green');
+  assert.equal(smtree.sections[0].name, 'Login');
+  assert.equal(smtree.sections[0].color, 'blue');
+  assert.equal(smtree.sections[0].test_cases[0].description, 'signs in');
+  assert.equal(smtree.unsectioned[0].description, 'sub loose');
 });

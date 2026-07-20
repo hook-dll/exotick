@@ -8,9 +8,15 @@ const router = Router();
 router.use(requireRole('editor'));
 
 type SampleCase = { description: string; notes?: string | null };
-// `module` groups a section under a module container. Sections without one
-// stay at the library root — the seed shows off both levels.
-type SampleSection = { name: string; color: string | null; module?: string; cases: SampleCase[] };
+// `module` groups a section under a module; `sub_module` nests it one level
+// deeper (library → module → sub-module → section). Sections without either
+// stay at the library root — the seed shows off every level.
+type SampleSection = { name: string; color: string | null; module?: string; sub_module?: string; cases: SampleCase[] };
+
+// Container colors keyed by name, so the seed demonstrates colored modules +
+// sub-modules alongside colored sections.
+const MODULE_COLORS: Record<string, string | null> = { 'Core Flows': 'blue' };
+const SUB_MODULE_COLORS: Record<string, string | null> = { 'Sign-in': 'green' };
 
 // Realistic QA-flavored seed data — shows off sections, colors, markdown notes,
 // and enough cases to demonstrate the split-view preview and Compose flow.
@@ -19,6 +25,7 @@ const SAMPLES: SampleSection[] = [
     name: 'Auth',
     color: 'blue',
     module: 'Core Flows',
+    sub_module: 'Sign-in',
     cases: [
       { description: 'Sign up with valid email creates an account', notes: 'Use a fresh email that isn\'t already registered.\n\n**Expected:** confirmation banner + redirect to onboarding.' },
       { description: 'Sign in with correct password lands on Dashboard' },
@@ -99,10 +106,11 @@ export function seedSamplesLibrary(): { library: unknown; sectionsAdded: number;
   while (existingNames.has(name)) name = `Samples (${n++})`;
 
   const insertLibrary = db.prepare('INSERT INTO libraries (name, order_index) VALUES (?, ?)');
-  const insertModule = db.prepare('INSERT INTO modules (name, order_index, library_id) VALUES (?, ?, ?)');
-  const insertSection = db.prepare('INSERT INTO sections (name, order_index, color, library_id, module_id) VALUES (?, ?, ?, ?, ?)');
+  const insertModule = db.prepare('INSERT INTO modules (name, order_index, color, library_id) VALUES (?, ?, ?, ?)');
+  const insertSubModule = db.prepare('INSERT INTO sub_modules (name, order_index, color, module_id, library_id) VALUES (?, ?, ?, ?, ?)');
+  const insertSection = db.prepare('INSERT INTO sections (name, order_index, color, library_id, module_id, sub_module_id) VALUES (?, ?, ?, ?, ?, ?)');
   const insertCase = db.prepare(
-    'INSERT INTO test_cases (section_id, description, notes, order_index, library_id, module_id) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO test_cases (section_id, description, notes, order_index, library_id, module_id, sub_module_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
 
   let libraryId = 0;
@@ -118,30 +126,46 @@ export function seedSamplesLibrary(): { library: unknown; sectionsAdded: number;
     let moduleOrder = 0;
     for (const s of SAMPLES) {
       if (s.module && !moduleIdByName.has(s.module)) {
-        const info = insertModule.run(s.module, moduleOrder++, libraryId);
+        const info = insertModule.run(s.module, moduleOrder++, MODULE_COLORS[s.module] ?? null, libraryId);
         moduleIdByName.set(s.module, Number(info.lastInsertRowid));
       }
     }
 
-    // Section order_index is per-bucket (module, or root); track each bucket.
+    // Create the sub-modules referenced by the seed (keyed within their module).
+    const subModuleIdByKey = new Map<string, number>();
+    const subOrderByModule = new Map<string, number>();
+    for (const s of SAMPLES) {
+      if (!s.sub_module) continue;
+      const moduleId = s.module ? moduleIdByName.get(s.module)! : null;
+      const key = `${s.module ?? 'root'}:${s.sub_module}`;
+      if (subModuleIdByKey.has(key)) continue;
+      const bucket = s.module ?? 'root';
+      const smIdx = subOrderByModule.get(bucket) ?? 0;
+      subOrderByModule.set(bucket, smIdx + 1);
+      const info = insertSubModule.run(s.sub_module, smIdx, SUB_MODULE_COLORS[s.sub_module] ?? null, moduleId, libraryId);
+      subModuleIdByKey.set(key, Number(info.lastInsertRowid));
+    }
+
+    // Section order_index is per-bucket (module, sub-module, or root).
     const nextSectionOrder = new Map<string, number>();
     SAMPLES.forEach((s) => {
       const moduleId = s.module ? moduleIdByName.get(s.module)! : null;
-      const bucket = s.module ?? 'root';
+      const subModuleId = s.sub_module ? subModuleIdByKey.get(`${s.module ?? 'root'}:${s.sub_module}`)! : null;
+      const bucket = `${s.module ?? 'root'}:${s.sub_module ?? 'root'}`;
       const sIdx = nextSectionOrder.get(bucket) ?? 0;
       nextSectionOrder.set(bucket, sIdx + 1);
-      const info = insertSection.run(s.name, sIdx, s.color, libraryId, moduleId);
+      const info = insertSection.run(s.name, sIdx, s.color, libraryId, moduleId, subModuleId);
       const sectionId = Number(info.lastInsertRowid);
       sectionsAdded++;
       s.cases.forEach((c, cIdx) => {
-        insertCase.run(sectionId, c.description, c.notes ?? null, cIdx, libraryId, moduleId);
+        insertCase.run(sectionId, c.description, c.notes ?? null, cIdx, libraryId, moduleId, subModuleId);
         casesAdded++;
       });
     });
 
-    // Unsectioned cases live at the library root (section_id = NULL, module_id = NULL).
+    // Unsectioned cases live at the library root (section/module/sub all NULL).
     SAMPLE_UNSECTIONED.forEach((c, cIdx) => {
-      insertCase.run(null, c.description, c.notes ?? null, cIdx, libraryId, null);
+      insertCase.run(null, c.description, c.notes ?? null, cIdx, libraryId, null, null);
       casesAdded++;
     });
   });
