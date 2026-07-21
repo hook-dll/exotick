@@ -1,7 +1,7 @@
 ================================================================================
 exotick — Developer / Maintainer Reference
 ================================================================================
-Last updated: 2026-07-20
+Last updated: 2026-07-21
 
 Everything a maintainer needs to reconstruct or modify the system. Dry and
 authoritative. If it isn't here, it isn't a stable feature.
@@ -498,6 +498,21 @@ exotick/
       components/
         MarkdownView.tsx          react-markdown + remark-gfm with Tailwind
                                   prose classes
+        AddButton.tsx             Shared "add" affordance — dashed ghost pill
+                                  with a leading "+", blue hover. Wraps Action
+                                  (icon-mode aware). Replaces the old bare blue
+                                  text links in Edit Mode.
+        Chevron.tsx               Fold toggle (▾/▸) at the left of every
+                                  container header in Edit Mode + Compose;
+                                  stops click propagation so it doesn't fight
+                                  the neighbouring checkbox / row select.
+        Toast.tsx                 Single floating notification, position:fixed
+                                  bottom-right (never shifts layout, visible at
+                                  any scroll). Auto-dismiss (default 8s), timer
+                                  PAUSES while hovered so Undo stays reachable;
+                                  ✕ dismisses now. tone success|error; optional
+                                  onUndo. Only one is ever rendered — remount
+                                  via a changing key to restart the timer.
         TakeOverDialog.tsx        Modal used by Dashboard + ActiveTestRun;
                                   reason textarea + live char counter;
                                   submit disabled until trimmed length
@@ -546,8 +561,40 @@ exotick/
                                   library when mode=new. Image upload
                                   routed through api.upload.image so a
                                   mid-edit 401 also triggers /login
-                                  redirect; auto-dismiss success flash
-                                  after 4s.
+                                  redirect.
+                                  FOLD: every module / sub-module / section
+                                  header carries a Chevron; body hidden when
+                                  collapsed. State is session-only (Set of
+                                  `m:`/`sm:`/`s:` keys), NOT persisted, expand-
+                                  by-default. Expand all / Collapse all buttons
+                                  in the title row.
+                                  ADD AFFORDANCES: library-level creators live
+                                  in ONE bottom "Add to library" bar (module /
+                                  sub-module / section / cases) instead of
+                                  scattered links; per-container contextual adds
+                                  (add section/sub-module inside a module, add
+                                  case/section inside a section) stay inline.
+                                  All are AddButton pills. Empty-state card
+                                  offers Load sample data + Add module / section
+                                  / a case or many.
+                                  TOAST + UNDO: success/error feedback is a
+                                  single floating Toast (components/Toast.tsx),
+                                  not an in-flow div — no layout jump, visible
+                                  at any scroll. flash(msg, undo?) stores an
+                                  optional reversing closure; showError(msg) is
+                                  red with no undo; runUndo() runs the closure
+                                  then refetches and shows "Undone."; toastSeq
+                                  bumps to remount+restart the timer. Undo is
+                                  wired for adds/duplicate (delete created ids —
+                                  bulkCreate/bulkDuplicate return the rows),
+                                  moves (cases/sections/sub-modules → replayed
+                                  back to prior buckets, grouped by origin),
+                                  renames (rename back), and case/section
+                                  DELETES (re-created from a client snapshot —
+                                  NEW ids, appended order, notes+placement
+                                  kept). No undo (toast only) for copy-to-
+                                  library, library delete, merge, module/sub-
+                                  module delete, backup import.
         ComposeTestRun.tsx        Cases are grouped by module (slate
                                   container) → section, then library-root
                                   sections + unsectioned; ticking a section
@@ -558,7 +605,11 @@ exotick/
                                   panel (Run + Runner); runner field is
                                   a dropdown from /api/users/roster
                                   (any authed user); per-case picker
-                                  with TriCheckbox.
+                                  with TriCheckbox. Same FOLD as Edit Mode
+                                  (Chevron on every module/sub-module/section
+                                  + Expand all / Collapse all), session-only,
+                                  expand-by-default. No add affordances (read-
+                                  only selection).
         ActiveTestRun.tsx         Items grouped module → section (via
                                   buildModuleBlocks); module blocks wrap
                                   their section cards in a slate container.
@@ -1296,6 +1347,20 @@ Graceful shutdown:
 - trust proxy is set to 1 (not `true`). With a single Caddy in front, this
   correctly resolves req.ip and honors X-Forwarded-Proto. With no proxy,
   clients can no longer spoof X-Forwarded-For to fool the rate limiter.
+
+- Edit Mode UNDO is client-side, not a server transaction log. It re-runs
+  inverse API calls captured in a closure at action time: creates undo by
+  deleting the returned ids; moves replay the pre-move bucket per item;
+  renames rename back; DELETES re-CREATE from a client-side snapshot — so
+  the restored rows get NEW ids and land at the END of their bucket (order
+  and id are not preserved; notes + container are). There is no redo, and
+  only the latest action's undo is ever offered (single Toast). Ops with no
+  clean inverse (copy-to-library, library delete, merge, module/sub-module
+  delete, import) show a toast without an Undo button.
+
+- Container FOLD state (Edit Mode + Compose) is component-local React state,
+  session-only — never persisted, resets on reload / library switch, and
+  defaults to fully expanded. Keys are `m:<id>`/`sm:<id>`/`s:<id>`.
 
 
 ================================================================================

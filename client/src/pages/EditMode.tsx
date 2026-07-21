@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, KeyboardEvent } from 'react';
 import { api, backupExportUrl, testCasesPdfUrl } from '../api';
 import MarkdownView from '../components/MarkdownView';
+import AddButton from '../components/AddButton';
+import Chevron from '../components/Chevron';
+import Toast from '../components/Toast';
 import LibraryPicker from '../library/LibraryPicker';
 import Action from '../iconmode/Action';
 import { useAuth } from '../auth/AuthContext';
@@ -66,8 +69,14 @@ export default function EditMode() {
   const [sections, setSections] = useState<Section[]>([]);
   const [unsectioned, setUnsectioned] = useState<TestCase[]>([]);
   const [loading, setLoading] = useState(true);
+  // Toast (single floating slot). `error` shows red without Undo; `message`
+  // shows green and may carry an `undoFn`. `toastSeq` bumps on every new toast
+  // so the floating component remounts and restarts its auto-dismiss timer.
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [undoFn, setUndoFn] = useState<null | (() => Promise<void>)>(null);
+  const [toastSeq, setToastSeq] = useState(0);
+  const [undoing, setUndoing] = useState(false);
 
   const [editSection, setEditSection] = useState<EditSectionState>(null);
   const [addAfter, setAddAfter] = useState<AddAfterState>(null);
@@ -84,6 +93,12 @@ export default function EditMode() {
   const [selSubModules, setSelSubModules] = useState<Set<number>>(new Set());
   const [selModules, setSelModules] = useState<Set<number>>(new Set());
   const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  // Fold state — session-only (not persisted). Keys: `m:<id>` / `sm:<id>` /
+  // `s:<id>`. A key present in the set means that container is collapsed.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggleCollapse = (key: string) =>
+    setCollapsed((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
 
   const backupInputRef = useRef<HTMLInputElement>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -151,7 +166,7 @@ export default function EditMode() {
       setSelSubModules((prev) => new Set([...prev].filter((id) => subIds.has(id))));
       setSelModules((prev) => new Set([...prev].filter((id) => modIds.has(id))));
     } catch (e: any) {
-      setError(e.message);
+      showError(e.message);
     } finally {
       setLoading(false);
     }
@@ -165,17 +180,46 @@ export default function EditMode() {
     setNewModuleName(null); setNewModuleAfter(null); setRenameModule(null);
     setAddSubAfter(null); setNewSubModuleName(''); setRenameSubModule(null);
     setSelCases(new Set()); setSelSections(new Set()); setSelSubModules(new Set()); setSelModules(new Set()); setSelectedId(null);
-    setError(''); setMessage('');
+    setError(''); setMessage(''); setUndoFn(null);
     fetchData(activeLibraryId);
   }, [activeLibraryId]);
 
-  useEffect(() => {
-    if (!message) return;
-    const t = setTimeout(() => setMessage(''), 4000);
-    return () => clearTimeout(t);
-  }, [message]);
+  // Success toast, optionally carrying an undo action for the just-completed
+  // edit. `undo` performs only the reversing API calls — runUndo refetches.
+  const flash = (msg: string, undo?: () => Promise<void>) => {
+    setError('');
+    setUndoFn(() => undo ?? null);
+    setMessage(msg);
+    setToastSeq((s) => s + 1);
+  };
+  const showError = (msg: string) => {
+    setMessage('');
+    setUndoFn(null);
+    setError(msg);
+    setToastSeq((s) => s + 1);
+  };
+  const dismissToast = () => { setMessage(''); setError(''); setUndoFn(null); };
+  const runUndo = async () => {
+    if (!undoFn || undoing) return;
+    const fn = undoFn;
+    setUndoing(true);
+    try {
+      await fn();
+      if (activeLibraryId != null) await fetchData(activeLibraryId);
+      setMessage('Undone.'); setError(''); setUndoFn(null); setToastSeq((s) => s + 1);
+    } catch (e: any) {
+      showError(`Undo failed: ${e.message}`);
+    } finally {
+      setUndoing(false);
+    }
+  };
 
-  const flash = (msg: string) => { setError(''); setMessage(msg); };
+  // Locate a case anywhere in the current tree — used to snapshot its prior
+  // placement / content before a move or delete so undo can restore it.
+  const findCase = (id: number): TestCase | undefined => {
+    for (const { section } of allSections) { const c = section.test_cases.find((x) => x.id === id); if (c) return c; }
+    return allUnsectioned.find((x) => x.id === id);
+  };
 
   // ── Library management ───────────────────────────────────────
   const createLibrary = async () => {
@@ -187,19 +231,21 @@ export default function EditMode() {
       await refreshLibraries();
       setActiveLibrary(lib.id);
       flash(`Created library "${lib.name}".`);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { showError(e.message); }
   };
 
   const saveLibraryName = async () => {
     if (!activeLibrary) return;
     const name = (renameLibName ?? '').trim();
     if (!name || name === activeLibrary.name) { setRenameLibName(null); return; }
+    const libId = activeLibrary.id;
+    const prevName = activeLibrary.name;
     try {
-      await api.libraries.rename(activeLibrary.id, name);
+      await api.libraries.rename(libId, name);
       setRenameLibName(null);
       await refreshLibraries();
-      flash(`Renamed to "${name}".`);
-    } catch (e: any) { setError(e.message); }
+      flash(`Renamed to "${name}".`, async () => { await api.libraries.rename(libId, prevName); await refreshLibraries(); });
+    } catch (e: any) { showError(e.message); }
   };
 
   const openDeleteLibrary = () => { setDeleteLibOpen(true); setDeleteLibTyped(''); setDeleteLibError(''); };
@@ -228,28 +274,31 @@ export default function EditMode() {
     const name = (newModuleName ?? '').trim();
     if (!name || activeLibraryId == null) return;
     try {
-      await api.modules.create(name, activeLibraryId, newModuleAfter != null ? { after_id: newModuleAfter } : {});
+      const created = await api.modules.create(name, activeLibraryId, newModuleAfter != null ? { after_id: newModuleAfter } : {});
       setNewModuleName(null); setNewModuleAfter(null);
       fetchData(activeLibraryId);
-      flash(`Created module "${name}".`);
-    } catch (e: any) { setError(e.message); }
+      flash(`Created module "${name}".`, async () => { await api.modules.delete(created.id); });
+    } catch (e: any) { showError(e.message); }
   };
 
   const saveModuleName = async () => {
     if (!renameModule || activeLibraryId == null) return;
     const name = renameModule.name.trim();
     if (!name) return;
+    const id = renameModule.id;
+    const prevName = modules.find((m) => m.id === id)?.name ?? name;
     try {
-      await api.modules.update(renameModule.id, { name });
+      await api.modules.update(id, { name });
       setRenameModule(null);
       fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      if (name !== prevName) flash(`Renamed module to "${name}".`, async () => { await api.modules.update(id, { name: prevName }); });
+    } catch (e: any) { showError(e.message); }
   };
 
   const setModuleColor = async (id: number, color: SectionColor | null) => {
     setModules((prev) => prev.map((m) => (m.id === id ? { ...m, color } : m)));
     try { await api.modules.update(id, { color }); }
-    catch (e: any) { setError(e.message); if (activeLibraryId != null) fetchData(activeLibraryId); }
+    catch (e: any) { showError(e.message); if (activeLibraryId != null) fetchData(activeLibraryId); }
   };
 
   const deleteModule = async (id: number) => {
@@ -259,7 +308,7 @@ export default function EditMode() {
       await api.modules.delete(id);
       flash('Module deleted; its contents moved to the library root.');
       fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { showError(e.message); }
   };
 
   const moveModule = async (idx: number, dir: -1 | 1) => {
@@ -270,7 +319,7 @@ export default function EditMode() {
     [next[idx], next[j]] = [next[j], next[idx]];
     setModules(next);
     try { await api.modules.reorder(next.map((m) => m.id), activeLibraryId); }
-    catch (e: any) { setError(e.message); fetchData(activeLibraryId); }
+    catch (e: any) { showError(e.message); fetchData(activeLibraryId); }
   };
 
   // ── Sub-module actions ───────────────────────────────────────
@@ -278,13 +327,14 @@ export default function EditMode() {
     const name = newSubModuleName.trim();
     if (!name || !addSubAfter || activeLibraryId == null) return;
     try {
-      await api.subModules.create(name, activeLibraryId, {
+      const created = await api.subModules.create(name, activeLibraryId, {
         module_id: addSubAfter.moduleId,
         ...(addSubAfter.afterId != null ? { after_id: addSubAfter.afterId } : {}),
       });
       setNewSubModuleName(''); setAddSubAfter(null);
       fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      flash(`Created sub-module "${name}".`, async () => { await api.subModules.delete(created.id); });
+    } catch (e: any) { showError(e.message); }
   };
   const cancelAddSubModule = () => { setAddSubAfter(null); setNewSubModuleName(''); };
 
@@ -292,11 +342,14 @@ export default function EditMode() {
     if (!renameSubModule || activeLibraryId == null) return;
     const name = renameSubModule.name.trim();
     if (!name) return;
+    const id = renameSubModule.id;
+    const prevName = allSubModuleName(id);
     try {
-      await api.subModules.update(renameSubModule.id, { name });
+      await api.subModules.update(id, { name });
       setRenameSubModule(null);
       fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      if (name !== prevName) flash(`Renamed sub-module to "${name}".`, async () => { await api.subModules.update(id, { name: prevName }); });
+    } catch (e: any) { showError(e.message); }
   };
 
   const setSubModuleColor = async (id: number, color: SectionColor | null) => {
@@ -304,7 +357,7 @@ export default function EditMode() {
     setRootSubModules(patch);
     setModules((prev) => prev.map((m) => ({ ...m, sub_modules: patch(m.sub_modules) })));
     try { await api.subModules.update(id, { color }); }
-    catch (e: any) { setError(e.message); if (activeLibraryId != null) fetchData(activeLibraryId); }
+    catch (e: any) { showError(e.message); if (activeLibraryId != null) fetchData(activeLibraryId); }
   };
 
   const deleteSubModule = async (id: number) => {
@@ -314,7 +367,7 @@ export default function EditMode() {
       await api.subModules.delete(id);
       flash('Sub-module deleted; its contents moved up a level.');
       fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { showError(e.message); }
   };
 
   const moveSubModuleInBucket = async (bucket: SubModule[], idx: number, dir: -1 | 1) => {
@@ -330,24 +383,34 @@ export default function EditMode() {
   // ── Section actions ──────────────────────────────────────────
   const createSection = async () => {
     if (!newSectionName.trim() || !addAfter || activeLibraryId == null) return;
+    const name = newSectionName.trim();
     const opts = {
       module_id: addAfter.moduleId,
       sub_module_id: addAfter.subModuleId,
       ...(addAfter.afterId != null ? { after_id: addAfter.afterId } : {}),
     };
-    await api.sections.create(newSectionName.trim(), activeLibraryId, opts);
-    setNewSectionName('');
-    setAddAfter(null);
-    fetchData(activeLibraryId);
+    try {
+      const created = await api.sections.create(name, activeLibraryId, opts);
+      setNewSectionName('');
+      setAddAfter(null);
+      fetchData(activeLibraryId);
+      flash(`Created section "${name}".`, async () => { await api.sections.delete(created.id); });
+    } catch (e: any) { showError(e.message); }
   };
 
   const cancelAddSection = () => { setAddAfter(null); setNewSectionName(''); };
 
   const saveSection = async () => {
     if (!editSection?.name.trim() || activeLibraryId == null) return;
-    await api.sections.update(editSection.id, { name: editSection.name.trim() });
-    setEditSection(null);
-    fetchData(activeLibraryId);
+    const id = editSection.id;
+    const name = editSection.name.trim();
+    const prevName = allSections.find((x) => x.section.id === id)?.section.name ?? name;
+    try {
+      await api.sections.update(id, { name });
+      setEditSection(null);
+      fetchData(activeLibraryId);
+      if (name !== prevName) flash(`Renamed section to "${name}".`, async () => { await api.sections.update(id, { name: prevName }); });
+    } catch (e: any) { showError(e.message); }
   };
 
   const setSectionColor = async (id: number, color: SectionColor | null) => {
@@ -360,7 +423,7 @@ export default function EditMode() {
     try {
       await api.sections.update(id, { color });
     } catch (e: any) {
-      setError(e.message);
+      showError(e.message);
       if (activeLibraryId != null) fetchData(activeLibraryId);
     }
   };
@@ -414,8 +477,22 @@ export default function EditMode() {
   const deleteSection = async (id: number) => {
     if (!confirm('Delete this section? Its test cases stay in the same container as unsectioned.')) return;
     if (activeLibraryId == null) return;
-    await api.sections.delete(id);
-    fetchData(activeLibraryId);
+    const libId = activeLibraryId;
+    const found = allSections.find((x) => x.section.id === id)?.section;
+    const snap = found
+      ? { name: found.name, color: found.color, module_id: found.module_id, sub_module_id: found.sub_module_id, caseIds: found.test_cases.map((c) => c.id) }
+      : null;
+    try {
+      await api.sections.delete(id);
+      fetchData(libId);
+      // Undo re-creates the section (new id) and re-homes its former cases; the
+      // freed cases were left as unsectioned in the same container by the delete.
+      flash(`Deleted section "${snap?.name ?? ''}".`, snap ? async () => {
+        const created = await api.sections.create(snap.name, libId, { module_id: snap.module_id, sub_module_id: snap.sub_module_id });
+        if (snap.color) await api.sections.update(created.id, { color: snap.color });
+        if (snap.caseIds.length) await api.testCases.bulkMove(snap.caseIds, created.id, libId, snap.module_id, snap.sub_module_id);
+      } : undefined);
+    } catch (e: any) { showError(e.message); }
   };
 
   // Reorder sections within one bucket (a container's list).
@@ -440,8 +517,16 @@ export default function EditMode() {
   const deleteCase = async (id: number) => {
     if (!confirm('Delete this test case?')) return;
     if (activeLibraryId == null) return;
-    await api.testCases.delete(id);
-    fetchData(activeLibraryId);
+    const libId = activeLibraryId;
+    const c = findCase(id);
+    try {
+      await api.testCases.delete(id);
+      fetchData(libId);
+      // Undo re-creates the case (new id, appended) with its notes + placement.
+      flash('Deleted 1 test case.', c ? async () => {
+        await api.testCases.create({ description: c.description, notes: c.notes, library_id: libId, section_id: c.section_id, module_id: c.module_id, sub_module_id: c.sub_module_id });
+      } : undefined);
+    } catch (e: any) { showError(e.message); }
   };
 
   // Reorder cases within one bucket (a section, or an unsectioned pile).
@@ -462,10 +547,11 @@ export default function EditMode() {
     if (descriptions.length === 0) { setBulkAdd(null); return; }
     try {
       const r = await api.testCases.bulkCreate(bulkAdd.sectionId, descriptions, activeLibraryId, bulkAdd.moduleId, bulkAdd.subModuleId);
-      flash(`Added ${r.created} test case(s).`);
+      const createdIds = r.cases.map((c) => c.id);
       setBulkAdd(null);
       fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      flash(`Added ${r.created} test case(s).`, async () => { await api.testCases.bulkDelete(createdIds); });
+    } catch (e: any) { showError(e.message); }
   };
 
   // ── Selection helpers ────────────────────────────────────────
@@ -502,12 +588,23 @@ export default function EditMode() {
       const subName = subModuleId == null ? '' : ` › ${allSubModuleName(subModuleId)}`;
       destName = `${modName}${subName} · Unsectioned`;
     }
+    // Snapshot each case's current bucket so undo can send it home.
+    const libId = activeLibraryId;
+    const prior = ids.map((id) => { const c = findCase(id); return { id, section_id: c?.section_id ?? null, module_id: c?.module_id ?? null, sub_module_id: c?.sub_module_id ?? null }; });
     try {
-      const r = await api.testCases.bulkMove(ids, sectionId, activeLibraryId, moduleId, subModuleId);
-      flash(`Moved ${r.moved} test case(s) to ${destName}.`);
+      const r = await api.testCases.bulkMove(ids, sectionId, libId, moduleId, subModuleId);
       clearSel();
-      fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      fetchData(libId);
+      flash(`Moved ${r.moved} test case(s) to ${destName}.`, async () => {
+        const groups = new Map<string, { section_id: number | null; module_id: number | null; sub_module_id: number | null; ids: number[] }>();
+        for (const p of prior) {
+          const key = `${p.section_id}|${p.module_id}|${p.sub_module_id}`;
+          const g = groups.get(key) ?? { section_id: p.section_id, module_id: p.module_id, sub_module_id: p.sub_module_id, ids: [] };
+          g.ids.push(p.id); groups.set(key, g);
+        }
+        for (const g of groups.values()) await api.testCases.bulkMove(g.ids, g.section_id, libId, g.module_id, g.sub_module_id);
+      });
+    } catch (e: any) { showError(e.message); }
   };
 
   const allSubModuleName = (id: number): string => {
@@ -518,13 +615,20 @@ export default function EditMode() {
   const bulkDeleteCases = async () => {
     const ids = [...selCases];
     if (ids.length === 0 || activeLibraryId == null) return;
-    if (!confirm(`Delete ${ids.length} test case(s)? This cannot be undone.`)) return;
+    if (!confirm(`Delete ${ids.length} test case(s)?`)) return;
+    const libId = activeLibraryId;
+    // Snapshot the full cases so undo can re-create them (new ids, appended).
+    const snapshot = ids.map((id) => findCase(id)).filter(Boolean) as TestCase[];
     try {
       const r = await api.testCases.bulkDelete(ids);
-      flash(`Deleted ${r.deleted} test case(s).`);
       clearSel();
-      fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      fetchData(libId);
+      flash(`Deleted ${r.deleted} test case(s).`, async () => {
+        for (const c of snapshot) {
+          await api.testCases.create({ description: c.description, notes: c.notes, library_id: libId, section_id: c.section_id, module_id: c.module_id, sub_module_id: c.sub_module_id });
+        }
+      });
+    } catch (e: any) { showError(e.message); }
   };
 
   const bulkDuplicateCases = async () => {
@@ -532,10 +636,11 @@ export default function EditMode() {
     if (ids.length === 0 || activeLibraryId == null) return;
     try {
       const r = await api.testCases.bulkDuplicate(ids);
-      flash(`Duplicated ${r.created} test case(s).`);
+      const createdIds = r.cases.map((c) => c.id);
       clearSel();
       fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      flash(`Duplicated ${r.created} test case(s).`, async () => { await api.testCases.bulkDelete(createdIds); });
+    } catch (e: any) { showError(e.message); }
   };
 
   const bulkExportCasesPDF = () => {
@@ -563,7 +668,7 @@ export default function EditMode() {
       flash(`Copied ${r.copiedCases} case${r.copiedCases === 1 ? '' : 's'}${extra} to "${r.library?.name ?? targetName}".`);
       clearSel();
     } catch (e: any) {
-      setError(e.message);
+      showError(e.message);
     } finally {
       setCopyBusy(false);
     }
@@ -572,7 +677,7 @@ export default function EditMode() {
   // ── Bulk section operations ──────────────────────────────────
   const mergeSections = async (targetId: number) => {
     const sources = [...selSections].filter((id) => id !== targetId);
-    if (sources.length === 0 || activeLibraryId == null) { setError('Pick a different target section to merge into.'); return; }
+    if (sources.length === 0 || activeLibraryId == null) { showError('Pick a different target section to merge into.'); return; }
     const targetName = allSections.find((x) => x.section.id === targetId)?.section.name ?? 'section';
     if (!confirm(`Merge ${sources.length} section(s) into "${targetName}"? The emptied sections will be deleted.`)) return;
     try {
@@ -580,19 +685,30 @@ export default function EditMode() {
       flash(`Merged ${r.mergedSections} section(s) into "${targetName}" (${r.movedCases} case(s) moved).`);
       clearSel();
       fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { showError(e.message); }
   };
 
   const bulkDeleteSections = async () => {
     const ids = [...selSections];
     if (ids.length === 0 || activeLibraryId == null) return;
     if (!confirm(`Delete ${ids.length} section(s)? Their test cases stay in the same container as unsectioned.`)) return;
+    const libId = activeLibraryId;
+    const snapshot = ids.map((id) => {
+      const s = allSections.find((x) => x.section.id === id)?.section;
+      return s ? { name: s.name, color: s.color, module_id: s.module_id, sub_module_id: s.sub_module_id, caseIds: s.test_cases.map((c) => c.id) } : null;
+    }).filter(Boolean) as { name: string; color: SectionColor | null; module_id: number | null; sub_module_id: number | null; caseIds: number[] }[];
     try {
       const r = await api.sections.bulkDelete(ids);
-      flash(`Deleted ${r.deleted} section(s).`);
       clearSel();
-      fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      fetchData(libId);
+      flash(`Deleted ${r.deleted} section(s).`, async () => {
+        for (const s of snapshot) {
+          const created = await api.sections.create(s.name, libId, { module_id: s.module_id, sub_module_id: s.sub_module_id });
+          if (s.color) await api.sections.update(created.id, { color: s.color });
+          if (s.caseIds.length) await api.testCases.bulkMove(s.caseIds, created.id, libId, s.module_id, s.sub_module_id);
+        }
+      });
+    } catch (e: any) { showError(e.message); }
   };
 
   // Move the selected sections (with their cases) into a container, or to root.
@@ -610,12 +726,22 @@ export default function EditMode() {
       subModuleId = Number(target.slice(3));
       destName = `"${allSubModuleName(subModuleId)}"`;
     }
+    const libId = activeLibraryId;
+    const prior = ids.map((id) => { const s = allSections.find((x) => x.section.id === id)?.section; return { id, module_id: s?.module_id ?? null, sub_module_id: s?.sub_module_id ?? null }; });
     try {
-      const r = await api.sections.moveModule(ids, activeLibraryId, moduleId, subModuleId);
-      flash(`Moved ${r.moved} section(s) to ${destName}.`);
+      const r = await api.sections.moveModule(ids, libId, moduleId, subModuleId);
       clearSel();
-      fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      fetchData(libId);
+      flash(`Moved ${r.moved} section(s) to ${destName}.`, async () => {
+        const groups = new Map<string, { module_id: number | null; sub_module_id: number | null; ids: number[] }>();
+        for (const p of prior) {
+          const key = `${p.module_id}|${p.sub_module_id}`;
+          const g = groups.get(key) ?? { module_id: p.module_id, sub_module_id: p.sub_module_id, ids: [] };
+          g.ids.push(p.id); groups.set(key, g);
+        }
+        for (const g of groups.values()) await api.sections.moveModule(g.ids, libId, g.module_id, g.sub_module_id);
+      });
+    } catch (e: any) { showError(e.message); }
   };
 
   // Move the selected sub-modules (with their content) into a module, or to root.
@@ -624,12 +750,23 @@ export default function EditMode() {
     if (ids.length === 0 || activeLibraryId == null || !target) return;
     const moduleId = target === 'root' ? null : Number(target);
     const destName = moduleId == null ? 'the library root' : `"${modules.find((m) => m.id === moduleId)?.name ?? 'module'}"`;
+    const libId = activeLibraryId;
+    // Snapshot each sub-module's parent module so undo restores it.
+    const prior = ids.map((id) => {
+      let mid: number | null = null;
+      for (const m of modules) { if (m.sub_modules.some((sm) => sm.id === id)) { mid = m.id; break; } }
+      return { id, module_id: mid };
+    });
     try {
-      const r = await api.subModules.moveModule(ids, activeLibraryId, moduleId);
-      flash(`Moved ${r.moved} sub-module(s) to ${destName}.`);
+      const r = await api.subModules.moveModule(ids, libId, moduleId);
       clearSel();
-      fetchData(activeLibraryId);
-    } catch (e: any) { setError(e.message); }
+      fetchData(libId);
+      flash(`Moved ${r.moved} sub-module(s) to ${destName}.`, async () => {
+        const groups = new Map<number | null, number[]>();
+        for (const p of prior) { const arr = groups.get(p.module_id) ?? []; arr.push(p.id); groups.set(p.module_id, arr); }
+        for (const [mid, gids] of groups) await api.subModules.moveModule(gids, libId, mid);
+      });
+    } catch (e: any) { showError(e.message); }
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -656,7 +793,7 @@ export default function EditMode() {
     e.target.value = '';
     if (!file) return;
     setError(''); setMessage('');
-    if (!file.name.toLowerCase().endsWith('.zip')) { setError('Please choose a .zip exotick backup file.'); return; }
+    if (!file.name.toLowerCase().endsWith('.zip')) { showError('Please choose a .zip exotick backup file.'); return; }
     setImportFile(file);
   };
 
@@ -683,7 +820,7 @@ export default function EditMode() {
       );
       setImportFile(null);
     } catch (e: any) {
-      setError(e.message);
+      showError(e.message);
     } finally {
       setImportBusy(false);
     }
@@ -813,16 +950,13 @@ export default function EditMode() {
           </div>
         ) : (
           <>
-            <button onClick={() => setBulkAdd({ sectionId, moduleId, subModuleId, text: '' })} className="text-xs text-blue-500 hover:text-blue-700">
-              <Action icon="plusPlus" label="Add a case or many">+ add a case or many</Action>
-            </button>
+            <AddButton icon="plusPlus" label="Add a case or many" onClick={() => setBulkAdd({ sectionId, moduleId, subModuleId, text: '' })}>+ add a case or many</AddButton>
             {sectionId !== null && (
-              <button
+              <AddButton
+                icon="plusPlusPlus"
+                label="Add section"
                 onClick={() => { setBulkAdd(null); setNewSectionName(''); setAddAfter({ afterId: sectionId, moduleId, subModuleId }); }}
-                className="text-xs text-blue-500 hover:text-blue-700"
-              >
-                <Action icon="plusPlusPlus" label="Add section">+ add section</Action>
-              </button>
+              >+ add section</AddButton>
             )}
           </>
         )}
@@ -872,11 +1006,14 @@ export default function EditMode() {
     const fullyChecked = secSelected && allCasesSelected;
     const partial = !fullyChecked && (secSelected || someCasesSelected);
     const tintClass = section.color ? ` section-tint-${section.color}` : '';
+    const secKey = `s:${section.id}`;
+    const secOpen = !collapsed.has(secKey);
+    const editing = editSection?.id === section.id;
     return (
       <div key={section.id}>
         <div className={`bg-white border rounded-lg overflow-hidden ${secSelected ? 'ring-1 ring-blue-400' : ''}`}>
-          <div className={`group/sec flex items-center gap-2 px-4 py-3 border-b${tintClass}`}>
-            {editSection?.id === section.id ? (
+          <div className={`group/sec flex items-center gap-2 px-3 py-2${secOpen ? ' border-b' : ''}${tintClass}`}>
+            {editing ? (
               <>
                 <input
                   className="flex-1 font-semibold border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
@@ -890,6 +1027,7 @@ export default function EditMode() {
               </>
             ) : (
               <>
+                <Chevron open={secOpen} onToggle={() => toggleCollapse(secKey)} title={secOpen ? 'Collapse section' : 'Expand section'} />
                 <TriCheckbox
                   checked={fullyChecked}
                   indeterminate={partial}
@@ -909,9 +1047,11 @@ export default function EditMode() {
               </>
             )}
           </div>
-          <div className="px-4 py-3">
-            {renderCases(section.test_cases, section.id, moduleId, subModuleId)}
-          </div>
+          {(secOpen || editing) && (
+            <div className="px-3 py-2">
+              {renderCases(section.test_cases, section.id, moduleId, subModuleId)}
+            </div>
+          )}
         </div>
         {addAfter?.afterId === section.id && (
           <div className="mt-3">{renderAddSectionForm()}</div>
@@ -947,11 +1087,14 @@ export default function EditMode() {
     const fully = subSelected && secIds.every((id) => selSections.has(id)) && caseIds.every((id) => selCases.has(id));
     const partial = !fully && (subSelected || secIds.some((id) => selSections.has(id)) || caseIds.some((id) => selCases.has(id)));
     const headerTint = sm.color ? `section-tint-${sm.color}` : 'submodule-header-plain';
+    const subKey = `sm:${sm.id}`;
+    const subOpen = !collapsed.has(subKey);
+    const renaming = renameSubModule?.id === sm.id;
     return (
       <div key={sm.id}>
         <div className={`submodule-shell overflow-hidden ${subSelected ? 'ring-1 ring-blue-400' : ''}`}>
-          <div className={`submodule-header group/sub flex items-center gap-2 px-4 py-2.5 ${headerTint}`}>
-            {renameSubModule?.id === sm.id ? (
+          <div className={`submodule-header group/sub flex items-center gap-2 px-3 py-2 ${headerTint}`}>
+            {renaming ? (
               <>
                 <input
                   className="flex-1 font-semibold border rounded px-2 py-1 text-sm focus:outline-none"
@@ -965,6 +1108,7 @@ export default function EditMode() {
               </>
             ) : (
               <>
+                <Chevron open={subOpen} onToggle={() => toggleCollapse(subKey)} title={subOpen ? 'Collapse sub-module' : 'Expand sub-module'} />
                 <TriCheckbox checked={fully} indeterminate={partial} onChange={() => toggleSubModule(sm)} title="Select sub-module and all its contents" className="shrink-0" />
                 <span className="font-semibold text-sm">{sm.name}</span>
                 <span className="text-xs text-gray-500 ml-1">{sm.sections.length} section{sm.sections.length === 1 ? '' : 's'}</span>
@@ -978,17 +1122,17 @@ export default function EditMode() {
               </>
             )}
           </div>
-          <div className="p-3 space-y-3">
-            {sm.sections.map((s, i) => renderSectionCard(s, sm.sections, i, moduleId, sm.id))}
-            {renderContainerUnsectioned(sm.unsectioned, moduleId, sm.id)}
-            {addAfter && addAfter.afterId === null && addAfter.moduleId === moduleId && addAfter.subModuleId === sm.id ? (
-              renderAddSectionForm()
-            ) : (
-              <button onClick={() => { setNewSectionName(''); setAddAfter({ afterId: null, moduleId, subModuleId: sm.id }); }} className="text-xs text-blue-500 hover:text-blue-700">
-                <Action icon="plusPlusPlus" label="Add section">+ add section</Action>
-              </button>
-            )}
-          </div>
+          {subOpen && (
+            <div className="p-3 space-y-3">
+              {sm.sections.map((s, i) => renderSectionCard(s, sm.sections, i, moduleId, sm.id))}
+              {renderContainerUnsectioned(sm.unsectioned, moduleId, sm.id)}
+              {addAfter && addAfter.afterId === null && addAfter.moduleId === moduleId && addAfter.subModuleId === sm.id ? (
+                renderAddSectionForm()
+              ) : (
+                <AddButton icon="plusPlusPlus" label="Add section" onClick={() => { setNewSectionName(''); setAddAfter({ afterId: null, moduleId, subModuleId: sm.id }); }}>+ add section</AddButton>
+              )}
+            </div>
+          )}
         </div>
         {addSubAfter?.afterId === sm.id && (
           <div className="mt-3">{renderAddSubModuleForm()}</div>
@@ -1021,6 +1165,22 @@ export default function EditMode() {
 
   const canDeleteLibrary = libraries.length > 1;
   const isEmpty = modules.length === 0 && rootSubModules.length === 0 && sections.length === 0 && unsectioned.length === 0;
+
+  // Every module / sub-module / section key in the current library — used by
+  // Collapse all.
+  const allCollapsibleKeys = (): string[] => {
+    const keys: string[] = [];
+    for (const m of modules) {
+      keys.push(`m:${m.id}`);
+      for (const sm of m.sub_modules) { keys.push(`sm:${sm.id}`); for (const s of sm.sections) keys.push(`s:${s.id}`); }
+      for (const s of m.sections) keys.push(`s:${s.id}`);
+    }
+    for (const sm of rootSubModules) { keys.push(`sm:${sm.id}`); for (const s of sm.sections) keys.push(`s:${s.id}`); }
+    for (const s of sections) keys.push(`s:${s.id}`);
+    return keys;
+  };
+  const collapseAll = () => setCollapsed(new Set(allCollapsibleKeys()));
+  const expandAll = () => setCollapsed(new Set());
 
   // "Move cases to…" picker options, grouped by container. <optgroup> can't
   // nest, so a sub-module gets its own group with a "Module › Sub" label.
@@ -1121,6 +1281,16 @@ export default function EditMode() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-800">Edit Mode</h1>
         <div className="flex items-center gap-2">
+          {!isEmpty && (
+            <div className="flex items-center rounded border border-gray-200 overflow-hidden mr-1">
+              <button onClick={expandAll} className="px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-100" title="Expand all containers">
+                <Action icon="chevronDown" label="Expand all">▾ Expand all</Action>
+              </button>
+              <button onClick={collapseAll} className="px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-100 border-l border-gray-200" title="Collapse all containers">
+                <Action icon="chevronRight" label="Collapse all">▸ Collapse all</Action>
+              </button>
+            </div>
+          )}
           {canBackup && (
             <>
               <a href={backupExportUrl(activeLibraryId)} className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-600" title="Download a backup .zip of this library">
@@ -1226,9 +1396,6 @@ export default function EditMode() {
         </div>
       )}
 
-      {error && <div className="text-red-600 text-sm mb-4">{error}</div>}
-      {message && <div className="text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2 text-sm mb-4">{message}</div>}
-
       {/* Delete-library confirmation */}
       {deleteLibOpen && activeLibrary && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={closeDeleteLibrary}>
@@ -1311,7 +1478,7 @@ export default function EditMode() {
                       await refreshLibraries();
                       setActiveLibrary(r.library.id);
                       flash(`Created "${r.library.name}" with ${r.casesAdded} sample case(s) across ${r.sectionsAdded} section(s).`);
-                    } catch (e: any) { setError(e.message); }
+                    } catch (e: any) { showError(e.message); }
                   }}
                   className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded"
                 >
@@ -1322,6 +1489,9 @@ export default function EditMode() {
                 </button>
                 <button onClick={() => { setNewSectionName(''); setAddAfter({ afterId: null, moduleId: null, subModuleId: null }); }} className="px-3 py-1.5 text-sm border border-gray-300 hover:bg-gray-50 rounded text-gray-700">
                   <Action icon="plusPlusPlus" label="Add section">+ Add section</Action>
+                </button>
+                <button onClick={() => setBulkAdd({ sectionId: null, moduleId: null, subModuleId: null, text: '' })} className="px-3 py-1.5 text-sm border border-gray-300 hover:bg-gray-50 rounded text-gray-700">
+                  <Action icon="draft" label="Add a case or many">+ Add a case or many</Action>
                 </button>
               </div>
             </>
@@ -1344,11 +1514,14 @@ export default function EditMode() {
           const fully = modSelected && allChildren;
           const partial = !fully && (modSelected || subIds.some((id) => selSubModules.has(id)) || secIds.some((id) => selSections.has(id)) || caseIds.some((id) => selCases.has(id)));
           const headerTint = m.color ? `section-tint-${m.color}` : 'module-header-plain';
+          const modKey = `m:${m.id}`;
+          const modOpen = !collapsed.has(modKey);
+          const renamingMod = renameModule?.id === m.id;
           return (
             <div key={m.id}>
             <div className={`module-shell overflow-hidden ${modSelected ? 'ring-1 ring-blue-400' : ''}`}>
-              <div className={`module-header group/mod flex items-center gap-2 px-4 py-2.5 ${headerTint}`}>
-                {renameModule?.id === m.id ? (
+              <div className={`module-header group/mod flex items-center gap-2 px-3 py-2 ${headerTint}`}>
+                {renamingMod ? (
                   <>
                     <input
                       className="flex-1 font-bold border rounded px-2 py-1 text-sm focus:outline-none"
@@ -1362,6 +1535,7 @@ export default function EditMode() {
                   </>
                 ) : (
                   <>
+                    <Chevron open={modOpen} onToggle={() => toggleCollapse(modKey)} title={modOpen ? 'Collapse module' : 'Expand module'} />
                     <TriCheckbox checked={fully} indeterminate={partial} onChange={() => toggleModule(m)} title="Select module and all its contents" className="shrink-0" />
                     <span className="font-bold tracking-wide text-sm">{m.name}</span>
                     <span className="text-xs text-gray-500 ml-1">{m.sub_modules.length} sub-module{m.sub_modules.length === 1 ? '' : 's'}</span>
@@ -1375,58 +1549,33 @@ export default function EditMode() {
                   </>
                 )}
               </div>
-              <div className="p-3 space-y-3">
-                {m.sub_modules.map((sm, i) => renderSubModuleCard(sm, m.sub_modules, i, m.id))}
-                {/* Add sub-module (append) */}
-                {addSubAfter && addSubAfter.afterId === null && addSubAfter.moduleId === m.id ? (
-                  renderAddSubModuleForm()
-                ) : null}
-                {m.sections.map((s, i) => renderSectionCard(s, m.sections, i, m.id, null))}
-                {renderContainerUnsectioned(m.unsectioned, m.id, null)}
-                {addAfter && addAfter.afterId === null && addAfter.moduleId === m.id && addAfter.subModuleId === null && (
-                  <div>{renderAddSectionForm()}</div>
-                )}
-                <div className="flex items-center gap-3">
-                  <button onClick={() => { setNewSubModuleName(''); setAddSubAfter({ afterId: null, moduleId: m.id }); }} className="text-xs text-blue-500 hover:text-blue-700">
-                    <Action icon="plusPlus" label="Add sub-module">+ add sub-module</Action>
-                  </button>
-                  <button onClick={() => { setNewSectionName(''); setAddAfter({ afterId: null, moduleId: m.id, subModuleId: null }); }} className="text-xs text-blue-500 hover:text-blue-700">
-                    <Action icon="plusPlusPlus" label="Add section">+ add section</Action>
-                  </button>
+              {modOpen && (
+                <div className="p-3 space-y-3">
+                  {m.sub_modules.map((sm, i) => renderSubModuleCard(sm, m.sub_modules, i, m.id))}
+                  {/* Add sub-module (append) */}
+                  {addSubAfter && addSubAfter.afterId === null && addSubAfter.moduleId === m.id ? (
+                    renderAddSubModuleForm()
+                  ) : null}
+                  {m.sections.map((s, i) => renderSectionCard(s, m.sections, i, m.id, null))}
+                  {renderContainerUnsectioned(m.unsectioned, m.id, null)}
+                  {addAfter && addAfter.afterId === null && addAfter.moduleId === m.id && addAfter.subModuleId === null && (
+                    <div>{renderAddSectionForm()}</div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <AddButton icon="plusPlus" label="Add sub-module" onClick={() => { setNewSubModuleName(''); setAddSubAfter({ afterId: null, moduleId: m.id }); }}>+ add sub-module</AddButton>
+                    <AddButton icon="plusPlusPlus" label="Add section" onClick={() => { setNewSectionName(''); setAddAfter({ afterId: null, moduleId: m.id, subModuleId: null }); }}>+ add section</AddButton>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
-            {/* Add module (sibling after this one) */}
-            {newModuleName !== null && newModuleAfter === m.id ? (
-              <div className="module-shell module-header-plain overflow-hidden mt-3">
-                <div className="module-header flex items-center gap-2 px-4 py-2.5">
-                  <input
-                    className="flex-1 font-bold border rounded px-2 py-1 text-sm focus:outline-none"
-                    placeholder="New module name"
-                    value={newModuleName}
-                    onChange={(e) => setNewModuleName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') createModule(); if (e.key === 'Escape') { setNewModuleName(null); setNewModuleAfter(null); } }}
-                    autoFocus
-                  />
-                  <button onClick={createModule} className="text-green-600 text-xs px-2 py-1 hover:bg-green-50 rounded"><Action icon="plus">Add</Action></button>
-                  <button onClick={() => { setNewModuleName(null); setNewModuleAfter(null); }} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded"><Action icon="x">Cancel</Action></button>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-2">
-                <button onClick={() => { setNewModuleAfter(m.id); setNewModuleName(''); }} className="text-xs text-blue-500 hover:text-blue-700">
-                  <Action icon="plus" label="Add module">+ add module</Action>
-                </button>
-              </div>
-            )}
             </div>
           );
         })}
 
-        {/* + New module (append at end) */}
-        {newModuleName !== null && newModuleAfter === null ? (
+        {/* Module append form — opened from the add bar (or the empty state) */}
+        {newModuleName !== null && newModuleAfter === null && (
           <div className="module-shell module-header-plain overflow-hidden">
-            <div className="module-header flex items-center gap-2 px-4 py-2.5">
+            <div className="module-header flex items-center gap-2 px-3 py-2">
               <input
                 className="flex-1 font-bold border rounded px-2 py-1 text-sm focus:outline-none"
                 placeholder="New module name"
@@ -1439,12 +1588,6 @@ export default function EditMode() {
               <button onClick={() => setNewModuleName(null)} className="text-gray-400 text-xs px-2 py-1 hover:bg-gray-100 rounded"><Action icon="x">Cancel</Action></button>
             </div>
           </div>
-        ) : (
-          !isEmpty && (
-            <button onClick={() => { setNewModuleAfter(null); setNewModuleName(''); }} className="text-xs text-blue-500 hover:text-blue-700">
-              <Action icon="plus" label="New module">+ New module</Action>
-            </button>
-          )
         )}
 
         {/* Root sub-modules */}
@@ -1452,50 +1595,40 @@ export default function EditMode() {
         {addSubAfter && addSubAfter.afterId === null && addSubAfter.moduleId === null && (
           <div>{renderAddSubModuleForm()}</div>
         )}
-        {!isEmpty && (
-          <button onClick={() => { setNewSubModuleName(''); setAddSubAfter({ afterId: null, moduleId: null }); }} className="text-xs text-blue-500 hover:text-blue-700">
-            <Action icon="plusPlus" label="Add sub-module">+ add sub-module</Action>
-          </button>
-        )}
 
         {/* Root sections */}
-        {!isEmpty && sections.length === 0 && (
-          <div>
-            {addAfter && addAfter.afterId === null && addAfter.moduleId === null && addAfter.subModuleId === null ? (
-              renderAddSectionForm()
-            ) : (
-              <button onClick={() => { setNewSectionName(''); setAddAfter({ afterId: null, moduleId: null, subModuleId: null }); }} className="text-xs text-blue-500 hover:text-blue-700">
-                <Action icon="plusPlusPlus" label="Add section">+ add section</Action>
-              </button>
-            )}
-          </div>
+        {sections.map((s, i) => renderSectionCard(s, sections, i, null, null))}
+        {!isEmpty && addAfter && addAfter.afterId === null && addAfter.moduleId === null && addAfter.subModuleId === null && (
+          <div>{renderAddSectionForm()}</div>
         )}
 
-        {sections.map((s, i) => renderSectionCard(s, sections, i, null, null))}
-
-        {/* Root unsectioned — the only place to add unsectioned cases */}
+        {/* Root unsectioned */}
         {(unsectioned.length > 0 || (bulkAdd?.sectionId === null && bulkAdd.moduleId === null && bulkAdd.subModuleId === null)) && (() => {
           const uAll = unsectioned.length > 0 && unsectioned.every((c) => selCases.has(c.id));
           const uSome = unsectioned.some((c) => selCases.has(c.id));
           return (
             <div className="bg-white border rounded-lg overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-3 border-b">
+              <div className="flex items-center gap-2 px-3 py-2 border-b">
                 {unsectioned.length > 0 && (
                   <TriCheckbox checked={uAll} indeterminate={uSome} onChange={() => toggleAllIn(unsectioned)} title="Select all unsectioned cases" className="shrink-0" />
                 )}
                 <span className="flex-1 font-semibold text-gray-400">Unsectioned</span>
                 <span className="text-xs text-gray-300">{unsectioned.length} cases</span>
               </div>
-              <div className="px-4 py-3">{renderCases(unsectioned, null, null, null)}</div>
+              <div className="px-3 py-2">{renderCases(unsectioned, null, null, null)}</div>
             </div>
           );
         })()}
 
-        {!isEmpty && unsectioned.length === 0 && !(bulkAdd?.sectionId === null && bulkAdd.moduleId === null && bulkAdd.subModuleId === null) && (
-          <div className="flex items-center gap-3">
-            <button onClick={() => setBulkAdd({ sectionId: null, moduleId: null, subModuleId: null, text: '' })} className="text-xs text-gray-400 hover:text-gray-600">
-              <Action icon="plusPlus" label="Add unsectioned case or many">+ add unsectioned case or many</Action>
-            </button>
+        {/* Add bar — the single home for library-level creators. Contextual
+            adds still live inside each open container. */}
+        {!isEmpty && (
+          <div className="flex items-center flex-wrap gap-2 pt-3 mt-1 border-t border-gray-200">
+            <span className="text-xs uppercase tracking-wide text-gray-400 mr-1">Add to library</span>
+            <AddButton icon="plus" label="New module" onClick={() => { setNewModuleAfter(null); setNewModuleName(''); }}>+ module</AddButton>
+            <AddButton icon="plusPlus" label="New sub-module" onClick={() => { setNewSubModuleName(''); setAddSubAfter({ afterId: null, moduleId: null }); }}>+ sub-module</AddButton>
+            <AddButton icon="plusPlusPlus" label="New section" onClick={() => { setNewSectionName(''); setAddAfter({ afterId: null, moduleId: null, subModuleId: null }); }}>+ section</AddButton>
+            <AddButton icon="draft" label="Add cases" onClick={() => setBulkAdd({ sectionId: null, moduleId: null, subModuleId: null, text: '' })}>+ cases</AddButton>
           </div>
         )}
       </div>
@@ -1526,6 +1659,20 @@ export default function EditMode() {
         </div>
       </div>
     </div>
+
+      {/* Floating toast — fixed to the viewport, so it never shifts layout and
+          stays visible at any scroll. Rendered last / outside the columns to
+          avoid anchoring to a positioned ancestor. */}
+      {(error || message) && (
+        <Toast
+          key={toastSeq}
+          text={error || message}
+          tone={error ? 'error' : 'success'}
+          onUndo={!error && undoFn ? runUndo : undefined}
+          onDismiss={dismissToast}
+          undoing={undoing}
+        />
+      )}
     </>
   );
 }

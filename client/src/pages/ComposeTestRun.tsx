@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import MarkdownView from '../components/MarkdownView';
+import Chevron from '../components/Chevron';
 import LibraryPicker from '../library/LibraryPicker';
 import Action from '../iconmode/Action';
 import { useAuth } from '../auth/AuthContext';
@@ -42,6 +43,10 @@ export default function ComposeTestRun() {
   const [roster, setRoster] = useState<string[]>([]);
   const [selectedCases, setSelectedCases] = useState<Set<number>>(new Set());
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Fold state — session-only. Keys: `m:<id>` / `sm:<id>` / `s:<id>`.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggleCollapse = (key: string) =>
+    setCollapsed((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
@@ -157,6 +162,22 @@ export default function ComposeTestRun() {
   const totalAvailable =
     allSections.reduce((sum, s) => sum + s.test_cases.length, 0) + allUnsectioned.length;
 
+  // Every module / sub-module / section key — used by Collapse all.
+  const allCollapsibleKeys = (): string[] => {
+    const keys: string[] = [];
+    for (const m of modules) {
+      keys.push(`m:${m.id}`);
+      for (const sm of m.sub_modules) { keys.push(`sm:${sm.id}`); for (const s of sm.sections) keys.push(`s:${s.id}`); }
+      for (const s of m.sections) keys.push(`s:${s.id}`);
+    }
+    for (const sm of rootSubModules) { keys.push(`sm:${sm.id}`); for (const s of sm.sections) keys.push(`s:${s.id}`); }
+    for (const s of sections) keys.push(`s:${s.id}`);
+    return keys;
+  };
+  const collapseAll = () => setCollapsed(new Set(allCollapsibleKeys()));
+  const expandAll = () => setCollapsed(new Set());
+  const isEmpty = modules.length === 0 && rootSubModules.length === 0 && sections.length === 0 && unsectioned.length === 0;
+
   const selected = (() => {
     if (selectedId == null) return null;
     for (const s of allSections) {
@@ -203,9 +224,12 @@ export default function ComposeTestRun() {
     const someSelected = caseIds.some((id) => selectedCases.has(id));
     const inSection = caseIds.filter((id) => selectedCases.has(id)).length;
     const tintClass = section.color ? ` section-tint-${section.color}` : '';
+    const secKey = `s:${section.id}`;
+    const secOpen = !collapsed.has(secKey);
     return (
       <div key={section.id} className="bg-white border rounded-lg overflow-hidden">
-        <div className={`flex items-center gap-2 px-4 py-3 border-b${tintClass}`}>
+        <div className={`flex items-center gap-2 px-3 py-2${secOpen && section.test_cases.length > 0 ? ' border-b' : ''}${tintClass}`}>
+          <Chevron open={secOpen} onToggle={() => toggleCollapse(secKey)} title={secOpen ? 'Collapse section' : 'Expand section'} />
           <TriCheckbox
             checked={allSelected}
             indeterminate={someSelected}
@@ -216,8 +240,8 @@ export default function ComposeTestRun() {
           <span className="flex-1 font-semibold text-gray-800">{section.name}</span>
           <span className="text-xs text-gray-400">{inSection}/{caseIds.length}</span>
         </div>
-        {section.test_cases.length > 0 && (
-          <div className="px-4 py-3">{section.test_cases.map(renderCaseRow)}</div>
+        {secOpen && section.test_cases.length > 0 && (
+          <div className="px-3 py-2">{section.test_cases.map(renderCaseRow)}</div>
         )}
       </div>
     );
@@ -225,13 +249,20 @@ export default function ComposeTestRun() {
 
   const renderSubModuleCard = (sm: SubModule) => {
     const headerTint = sm.color ? `section-tint-${sm.color}` : 'submodule-header-plain';
+    const subKey = `sm:${sm.id}`;
+    const subOpen = !collapsed.has(subKey);
     return (
       <div key={`sub-${sm.id}`} className="submodule-shell overflow-hidden">
-        <div className={`submodule-header px-4 py-2 text-sm font-semibold ${headerTint}`}>{sm.name}</div>
-        <div className="p-3 space-y-3">
-          {sm.sections.map(renderSectionCard)}
-          {renderUnsecCard(sm.unsectioned, `su-${sm.id}`)}
+        <div className={`submodule-header flex items-center gap-2 px-3 py-2 text-sm font-semibold ${headerTint}`}>
+          <Chevron open={subOpen} onToggle={() => toggleCollapse(subKey)} title={subOpen ? 'Collapse sub-module' : 'Expand sub-module'} />
+          <span>{sm.name}</span>
         </div>
+        {subOpen && (
+          <div className="p-3 space-y-3">
+            {sm.sections.map(renderSectionCard)}
+            {renderUnsecCard(sm.unsectioned, `su-${sm.id}`)}
+          </div>
+        )}
       </div>
     );
   };
@@ -244,7 +275,7 @@ export default function ComposeTestRun() {
     const uInSel = uIds.filter((id) => selectedCases.has(id)).length;
     return (
       <div key={key} className="bg-white border rounded-lg overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b">
+        <div className="flex items-center gap-2 px-3 py-2 border-b">
           <TriCheckbox
             checked={uAll}
             indeterminate={uSome}
@@ -255,7 +286,7 @@ export default function ComposeTestRun() {
           <span className="flex-1 font-semibold text-gray-400">Unsectioned</span>
           <span className="text-xs text-gray-300">{uInSel}/{uIds.length}</span>
         </div>
-        <div className="px-4 py-3">{cases.map(renderCaseRow)}</div>
+        <div className="px-3 py-2">{cases.map(renderCaseRow)}</div>
       </div>
     );
   };
@@ -327,7 +358,7 @@ export default function ComposeTestRun() {
           </div>
         </div>
 
-        {modules.length === 0 && rootSubModules.length === 0 && sections.length === 0 && unsectioned.length === 0 ? (
+        {isEmpty ? (
           <div className="bg-white border rounded-lg p-6 text-center text-gray-400 text-sm">
             {canEditCases ? (
               <>
@@ -340,16 +371,33 @@ export default function ComposeTestRun() {
           </div>
         ) : (
           <div className="space-y-3">
+            <div className="flex justify-end">
+              <div className="flex items-center rounded border border-gray-200 overflow-hidden">
+                <button onClick={expandAll} className="px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100" title="Expand all containers">
+                  <Action icon="chevronDown" label="Expand all">▾ Expand all</Action>
+                </button>
+                <button onClick={collapseAll} className="px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 border-l border-gray-200" title="Collapse all containers">
+                  <Action icon="chevronRight" label="Collapse all">▸ Collapse all</Action>
+                </button>
+              </div>
+            </div>
             {modules.map((m) => {
               const headerTint = m.color ? `section-tint-${m.color}` : 'module-header-plain';
+              const modKey = `m:${m.id}`;
+              const modOpen = !collapsed.has(modKey);
               return (
                 <div key={m.id} className="module-shell overflow-hidden">
-                  <div className={`module-header px-4 py-2.5 text-sm font-bold tracking-wide ${headerTint}`}>{m.name}</div>
-                  <div className="p-3 space-y-3">
-                    {m.sub_modules.map(renderSubModuleCard)}
-                    {m.sections.map(renderSectionCard)}
-                    {renderUnsecCard(m.unsectioned, `mu-${m.id}`)}
+                  <div className={`module-header flex items-center gap-2 px-3 py-2 text-sm font-bold tracking-wide ${headerTint}`}>
+                    <Chevron open={modOpen} onToggle={() => toggleCollapse(modKey)} title={modOpen ? 'Collapse module' : 'Expand module'} />
+                    <span>{m.name}</span>
                   </div>
+                  {modOpen && (
+                    <div className="p-3 space-y-3">
+                      {m.sub_modules.map(renderSubModuleCard)}
+                      {m.sections.map(renderSectionCard)}
+                      {renderUnsecCard(m.unsectioned, `mu-${m.id}`)}
+                    </div>
+                  )}
                 </div>
               );
             })}
